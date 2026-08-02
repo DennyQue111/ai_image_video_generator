@@ -1,0 +1,209 @@
+# ===========================================
+# 项目风格配置文件
+# 每种风格包含：
+#   - name: 风格显示名称
+#   - description: 风格描述
+#   - prompt: 用于AI图像生成的风格提示词（英文）
+#   - prompt_cn: 风格提示词（中文）
+#   - tags: 适用场景标签
+# ===========================================
+
+styles:
+  japan_anime:
+    name: "日式动画"
+    description: "经典日本动画风格，色彩鲜明但不过度饱和，线条清晰，人物细节轻盈自然"
+    prompt: "anime style, japanese animation, anime aesthetic, detailed anime art, vibrant but not oversaturated colors, cel shading, clean line art, delicate features, soft shadows, studio ghibli influence, makoto shinkai style, anime character design"
+    prompt_cn: "日式动画风格，日本动画美学，精细动画艺术，鲜明但不过度饱和的色彩，赛璐璐着色，清晰线条，精致五官，柔和阴影，吉卜力工作室风格，新海诚风格，动漫角色设计"
+    tags:
+      - "动画番剧"
+      -  "漫改"
+      - "日式风格"
+
+  realistic:
+    name: "写实风格"
+    description: "电影级写实渲染，接近真实摄影效果"
+    prompt: "photorealistic, cinematic, realistic lighting, film grain, natural colors, high detail, 35mm film look, depth of field"
+    prompt_cn: "照片写实风格，电影感，真实光照，胶片质感，自然色彩，高细节，35mm胶片效果，景深"
+    tags:
+      - "真人影视"
+      - "纪录片"
+      - "写实题材"
+
+  gantz_style:
+    name: "杀戮都市风格"
+    description: "源自《杀戮都市》的超现实科幻写实风格，融合了高对比度光影、冰冷的都市质感与诡异的生物机械美学，画面硬朗且带有紧张感。"
+    prompt: "GANTZ aesthetic, sci-fi horror style, hyper-realistic rendering, high contrast lighting, hard shadows, cold urban atmosphere, gritty textures, photorealistic materials, cinematic composition, intense atmosphere, biomechanical design influence, dark and moody tone, sharp details, metallic sheen, glass-like reflections, organic-mechanical hybrid textures, high detail, 8k resolution"
+    prompt_cn: "杀戮都市美学，科幻恐怖风格，超写实渲染，高对比度光照，硬朗阴影，冰冷都市质感，粗粝纹理，照片级材质，电影感构图，紧张氛围，生物机械设计影响，暗黑阴郁色调，锐利细节，金属光泽，玻璃般反光，有机-机械混合质感，高细节，8k分辨率"
+    tags:
+      - "科幻"
+      - "恐怖"
+      - "写实"
+      - "高对比度"
+      - "暗黑"
+      - "生物机械"
+
+  3d_cartoon:
+    name: "3D 卡通"
+    description: "皮克斯/迪士尼风格3D卡通渲染"
+    prompt: "3d cartoon style, pixar style, disney style, smooth rendering, soft lighting, colorful, rounded shapes, subsurface scattering"
+    prompt_cn: "3D卡通风格，皮克斯风格，迪士尼风格，平滑渲染，柔和光照，色彩丰富，圆润造型，次表面散射"
+    tags:
+      - "儿童动画"
+      - "家庭向"
+      - "3D动画"
+
+  watercolor:
+    name: "水彩手绘"
+    description: "水彩画风格，柔和朦胧的艺术质感"
+    prompt: "watercolor painting style, soft brush strokes, delicate washes, muted pastel colors, paper texture, artistic, hand-painted feel, gentle blending"
+    prompt_cn: "水彩画风格，柔和笔触，细腻晕染，柔和粉彩色调，纸张纹理，艺术感，手绘质感，温柔过渡"
+    tags:
+      - "文艺片"
+      - "绘本改编"
+      - "艺术风格"
+
+  cyberpunk:
+    name: "赛博朋克"
+    description: "霓虹灯光、暗色调的未来科幻风格"
+    prompt: "cyberpunk style, neon lights, dark atmosphere, futuristic, high contrast, glowing effects, rain-soaked streets, holographic elements, sci-fi aesthetic"
+    prompt_cn: "赛博朋克风格，霓虹灯光，暗色调氛围，未来感，高对比度，发光效果，雨夜街道，全息元素，科幻美学"
+    tags:
+      - "科幻题材"
+      - "未来都市"
+      - "赛博朋克"
+
+  chinese_ink:
+    name: "中国水墨"
+    description: "传统中国水墨画风格，意境深远"
+    prompt: "chinese ink painting style, traditional ink wash, sumi-e, black ink on rice paper, minimalist composition, flowing brush strokes, ethereal atmosphere, zen aesthetic"
+    prompt_cn: "中国水墨画风格，传统水墨，墨色晕染，宣纸质感，极简构图，流畅笔触，空灵意境，禅意美学"
+    tags:
+      - "古装"
+      - "武侠题材"
+      - "中国风"
+
+  solarpunk_utopian:
+    name: "太阳能朋克乌托邦"
+    description: "生态友好的未来主义风格，融合自然与先进清洁技术，明亮乐观的未来愿景"
+    prompt: "solarpunk aesthetic, utopian architecture, lush greenery integrated with futuristic structures, clean energy technology, biophilic design, glass domes, vertical gardens, sustainable materials, bright natural lighting, optimistic futurism, eco-friendly tech, harmonious nature-technology fusion, crystal-clear waterways, renewable energy sources, community-focused spaces"
+    prompt_cn: "太阳能朋克美学，乌托邦建筑，茂盛植被与未来结构融合，清洁能源技术，亲生物设计，玻璃穹顶，垂直花园，可持续材料，明亮自然光照，乐观未来主义，环保科技，自然与技术和谐融合，清澈水道，可再生能源，社区导向空间"
+    tags:
+      - "生态科幻"
+      - "未来乌托邦"
+      - "可持续设计"
+      - "乐观未来"
+
+  art_nouveau_cybernetic:
+    name: "新艺术赛博格"
+    description: "新艺术运动曲线美学与赛博格技术的独特融合，有机线条与机械增强的精致结合"
+    prompt: "art nouveau style meets cybernetic augmentation, flowing organic lines, intricate floral patterns, whiplash curves, elegant mechanical enhancements, gold filigree circuitry, stained glass effects on synthetic materials, Tiffany-style lamps with holographic displays, Mucha-inspired character designs with neural interfaces, delicate machinery with botanical motifs, belle époque elegance with futuristic implants, ornate brass and copper components with living vine accents"
+    prompt_cn: "新艺术风格融合赛博格增强，流动有机线条，复杂花卉图案，鞭状曲线，优雅机械增强，金丝细工电路，合成材料上的彩色玻璃效果，带全息显示的蒂芙尼风格灯具，慕夏风格角色设计配神经接口，带植物主题的精密机械，美好时代优雅与未来植入物结合，华丽黄铜铜组件配活藤蔓装饰"
+    tags:
+      - "蒸汽朋克变体"
+      - "艺术融合"
+      - "精致科幻"
+      - "有机机械"
+
+  dreamcore_liminal:
+    name: "梦境核心阈限空间"
+    description: "超现实梦境美学与阈限空间理论的结合，创造既熟悉又陌生的诡异舒适感"
+    prompt: "dreamcore aesthetic, liminal spaces, backrooms atmosphere, surreal dream logic, familiar yet unsettling environments, soft glitch effects, VHS tape distortion, nostalgic 90s/early 2000s decor with impossible geometry, endless corridors, empty pools with perfect water, abandoned malls with functioning escalators, childhood memories distorted, low-poly 3D models with realistic textures, analog horror elements, comforting unease, muted pastel colors with occasional vibrant anomalies, recursive spaces, non-euclidean architecture"
+    prompt_cn: "梦境核心美学，阈限空间，后台房间氛围，超现实梦境逻辑，熟悉又不安的环境，柔和故障效果，VHS磁带失真，怀旧90s/2000s早期装饰配不可能几何，无尽走廊，完美水体的空泳池，运转扶梯的废弃商场，扭曲的童年记忆，低多边形3D模型配真实纹理，模拟恐怖元素，舒适的不安感，柔和粉彩色调偶现鲜艳异常，递归空间，非欧几里得建筑"
+    tags:
+      - "超现实主义"
+      - "心理恐怖"
+      - "怀旧未来"
+      - "阈限美学"
+
+  steampunk:
+    name: "蒸汽朋克"
+    description: "19世纪末至20世纪初的机械美学风格，强调蒸汽动力、工业质感和复古装饰"
+    prompt: "steampunk style, victorian era, mechanical aesthetics, industrial texture, brass gears, steam-powered machinery, retro decor, goggles and hats, clockwork components, brass and copper elements, intricate machinery, leather and wood materials"
+    prompt_cn: "蒸汽朋克风格，维多利亚时代，机械美学，工业质感，黄铜齿轮，蒸汽动力机械，复古装饰，护目镜和礼帽，发条组件，黄铜和铜元素，复杂机械，皮革和木材材质"
+    tags:
+      - "蒸汽朋克"
+      - "复古科技"
+      - "工业风格"
+
+  fantasy:
+    name: "幻想风格"
+    description: "充满魔法与奇幻元素的艺术风格，色彩丰富，场景宏大，生物多样"
+    prompt: "fantasy style, magical atmosphere, fantasy art, vibrant colors, epic landscapes, mythical creatures, mystical settings, enchanted forests, towering castles, glowing orbs, otherworldly beings, ethereal light effects"
+    prompt_cn: "幻想风格，魔法氛围，奇幻艺术，色彩丰富，宏伟大景，神话生物，神秘环境，被施了魔法的森林，高耸的城堡，发光的水晶球，超自然生物，以太光效果"
+    tags:
+      - "奇幻题材"
+      - "魔法世界"
+      - "神话生物"
+
+  minimalism:
+    name: "极简风格"
+    description: "强调简洁和功能性的设计风格，色彩单一，线条干净，空间开阔"
+    prompt: "minimalist style, simple composition, clean lines, monochromatic, functional design, open space, neutral tones, understated elegance, modern art, sleek furniture, geometric shapes, white on black, black on white, repeating patterns"
+    prompt_cn: "极简风格，简洁构图，干净线条，单色系，功能性设计，开放空间，中性色调，低调优雅，现代艺术，简洁家具，几何图形，白色背景黑线条，黑色背景白线条，重复图案"
+    tags:
+      - "现代设计"
+      - "极简艺术"
+      - "开放空间"
+      - "功能性"
+
+  unreal_engine_realistic:
+    name: "虚幻引擎写实风格"
+    description: "使用虚幻引擎渲染的高细节、逼真光照和纹理的写实风格，适合现代或未来题材"
+    prompt: "unreal engine realistic style, high detail, realistic lighting, hyper-realistic textures, dynamic shadows, modern architecture, futuristic design, detailed environments, cinematic camera angles, photorealistic materials, advanced shading techniques, realistic animal and human textures"
+    prompt_cn: "虚幻引擎写实风格，高细节，逼真光照，超写实纹理，动态阴影，现代建筑，未来设计，精细环境，电影级摄像角度，照片级材料，高级着色技术，逼真动物和人物纹理"
+    tags:
+      - "现代题材"
+      - "未来题材"
+      - "高细节"
+      - "虚幻引擎"
+
+  unreal_previz:
+    name: "虚幻引擎预览"
+    description: "高精度预览渲染风格，类似电影前期Previz或游戏过场动画的渲染质量。材质干净利落，有明确的光影区分（漫反射+高光），光照具有电影感（主光、补光、轮廓光分明），阴影边缘柔和，整体呈现一种'制作精良但尚未最终渲染'的视觉预览感。适合作为三维建模和UE镜头输出的前期视觉参考。"
+    prompt: "unreal engine previsualization style, high quality game cinematics render, clean PBR materials with clear diffuse and specular separation, cinematic three-point lighting setup, soft shadow edges, medium detail textures, stylized realism, clear material definition, rendered in Unreal Engine 5, previs aesthetics, shot blockout quality, clean geometry, well-defined light and shadow, subtle ambient occlusion, crisp but not hyperrealistic, filmic color grading"
+    prompt_cn: "虚幻引擎预览风格，高质量游戏过场动画渲染，干净的PBR材质，漫反射与高光区分明确，电影级三点布光，柔和阴影边缘，中等细节纹理，风格化写实，清晰的材质定义，虚幻引擎5渲染，预览视觉效果，镜头草图质量，干净几何体，明确的光影关系，微妙的环境光遮蔽，清晰但不超写实，电影级调色"
+    tags:
+      - "游戏过场"
+      - "预览渲染"
+      - "UE5"
+      - "三维参考"
+      - "前期视觉"
+
+  american_anime:
+    name: "美式动漫"
+    description: "经典的美国动画风格，色彩明亮，角色多样，充满动感"
+    prompt: "anime style, american animation, bright colors, dynamic movements, diverse characters, comic book aesthetics, bold graphics, dynamic lighting"
+    prompt_cn: "美式动漫风格，美国动画美学，明亮色彩，动感动作，多样角色，漫画感，大胆图形，动态光照"
+    tags:
+      - "动画"
+      - "美式风格"
+      - "漫画"
+      - "动感"
+
+  american_adult_cartoon:
+    name: "淡彩美式卡通"
+    description: "美式卡通与写实结合，色彩明亮柔和、饱和度低，人物体型优美自然（略带肌肉线条但不夸张），光影通透，整体观感干净、清爽、带有成人向的精致感"
+    prompt: "western cartoon style, semi-realistic, bright pastel colors, desaturated but luminous palette, soft lighting, clean rendering, elegant character design, toned slender physique, subtle muscle definition, graceful proportions, comic art aesthetics, dynamic yet relaxed poses, refined line art, modern illustration vibe, attractive and stylish"
+    prompt_cn: "美式卡通风格，半写实，明亮淡彩，低饱和但通透的色调，柔和光影，干净渲染，优雅角色设计，匀称纤长体型，隐约肌肉线条，优美比例，漫画美学，动态而松弛的姿势，精致线稿，现代插画质感，迷人且时尚"
+    tags:
+      - "动画"
+      - "美式卡通"
+      - "淡彩"
+      - "半写实"
+      - "优美体型"
+      - "明亮柔和"
+
+  chinese_3d_ancient:
+    name: "中式三维古风"
+    description: "三维动画与中式传统美学的融合，画面明亮通透，色彩淡雅清丽，角色设计兼顾古典韵味与现代审美，整体呈现如画卷般优雅的东方幻境感。"
+    prompt: "3D animation style, ancient Chinese aesthetic, vibrant yet soft pastel palette, bright and luminous rendering, traditional ink wash painting elements, ethereal mist and clouds, elegant character design, flowing silk garments, oriental fantasy atmosphere, breathtaking landscape with mountains and waterfalls, cinematic lighting, delicate details, high quality, fine art"
+    prompt_cn: "三维动画风格，中式古风美学，明亮而柔和的淡彩色调，通透的光影渲染，传统水墨元素，缥缈的云雾缭绕，优雅的角色设计，飘逸的丝质衣袍，东方奇幻氛围，如画般的山水瀑布景观，电影级光影，精致细腻的细节，高质量渲染，唯美艺术质感"
+    tags:
+      - "三维动画"
+      - "中式古风"
+      - "淡彩明亮"
+      - "水墨融合"
+      - "东方奇幻"
+      - "唯美质感"
+
+
