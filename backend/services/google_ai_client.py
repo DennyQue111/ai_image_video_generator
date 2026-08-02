@@ -13,12 +13,18 @@ logger = logging.getLogger(__name__)
 
 class GoogleAIClient:
     def __init__(self, api_key: Optional[str] = None, timeout_seconds: int = 120):
-        self.api_key = api_key or os.getenv("GOOGLE_AI_STUDIO_API_KEY")
+        # 兼容 GEMINI_API_KEY（AI Studio 默认变量名）和 GOOGLE_AI_STUDIO_API_KEY
+        self.api_key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_AI_STUDIO_API_KEY")
         if not self.api_key:
-            logger.error("GOOGLE_AI_STUDIO_API_KEY is not set in environment")
-            raise ValueError("GOOGLE_AI_STUDIO_API_KEY is not set in environment")
+            logger.error("GEMINI_API_KEY (或 GOOGLE_AI_STUDIO_API_KEY) 未在环境中配置")
+            raise ValueError("GEMINI_API_KEY (或 GOOGLE_AI_STUDIO_API_KEY) 未在环境中配置")
         logger.info("GoogleAIClient initialized, timeout=%ss", timeout_seconds)
-        self.client = genai.Client(api_key=self.api_key, http_options={"timeout": timeout_seconds * 1000})
+        self.client = genai.Client(
+            api_key=self.api_key,
+            http_options=types.HttpOptions(
+                timeout=timeout_seconds * 1000,
+            ),
+        )
 
     def is_available(self) -> bool:
         return bool(self.api_key)
@@ -28,16 +34,51 @@ class GoogleAIClient:
         prompt: str,
         model: str = "gemini-2.5-flash-image",
         negative_prompt: str = "",
+        aspect_ratio: str = "1:1",
     ) -> Dict:
         contents = prompt
         if negative_prompt:
             contents = f"{prompt}\n\nAvoid: {negative_prompt}"
 
-        logger.info("[Gemini] Generating image with model=%s, prompt_len=%d", model, len(contents))
+        logger.info("[Gemini] Generating image, model=%s, prompt_len=%d, aspect_ratio=%s", model, len(contents), aspect_ratio)
+
+        # Imagen 系列模型使用 generateImages 方法
+        if "imagen" in model.lower():
+            logger.info("[Gemini] Using generateImages for Imagen model")
+            try:
+                response = await self.client.aio.models.generate_images(
+                    model=model,
+                    prompt=contents,
+                    config=types.GenerateImagesConfig(
+                        number_of_images=1,
+                        output_mime_type="image/jpeg",
+                        aspect_ratio=aspect_ratio,
+                    ),
+                )
+                if not response.generated_images:
+                    raise RuntimeError("Imagen API 未返回任何图片")
+                img = response.generated_images[0]
+                if not img.image or not img.image.image_bytes:
+                    raise RuntimeError("Imagen API 未返回图片数据")
+                logger.info("[Gemini] Imagen image data received, size=%d bytes", len(img.image.image_bytes))
+                return {
+                    "image_data": img.image.image_bytes,
+                    "mime_type": "image/jpeg",
+                }
+            except Exception as e:
+                logger.error("[Gemini] Imagen API request failed: %s", e)
+                raise
+
+        # Gemini 系列模型使用 generateContent 方法
         try:
             response = await self.client.aio.models.generate_content(
                 model=model,
                 contents=contents,
+                config=types.GenerateContentConfig(
+                    image_config=types.ImageConfig(
+                        aspect_ratio=aspect_ratio,
+                    ),
+                ),
             )
         except Exception as e:
             logger.error("[Gemini] API request failed: %s", e)
@@ -65,9 +106,12 @@ class GoogleAIClient:
         model: str,
         save_dir: Path,
         filename: Optional[str] = None,
+        aspect_ratio: str = "1:1",
     ) -> Dict:
         logger.info("[Gemini] generate_and_save called, model=%s, save_dir=%s", model, save_dir)
-        result = await self.generate_concept_image(prompt=prompt, model=model)
+        result = await self.generate_concept_image(
+            prompt=prompt, model=model, aspect_ratio=aspect_ratio
+        )
 
         image_data = result["image_data"]
         mime_type = result.get("mime_type", "image/png")
@@ -97,6 +141,7 @@ class GoogleAIClient:
         model: str,
         save_dir: Path,
         filename: Optional[str] = None,
+        aspect_ratio: str = "1:1",
     ) -> Dict:
         logger.info(
             "[Gemini] generate_with_images_and_save called, model=%s, num_images=%d, save_dir=%s",
@@ -112,12 +157,12 @@ class GoogleAIClient:
                 mime_type=mime,
             ))
             if desc:
-                parts.append(types.Part(text=f"这张图片的描述: {desc}"))
+                parts.append(types.Part(text=f"Reference Image #{idx + 1}: {desc}"))
 
         parts.append(types.Part(text=(
-            f"请根据以上多张参考图片以及它们的描述，按照以下总体要求生成一张新的合成图片。\n\n"
-            f"总体要求：{overall_prompt}\n\n"
-            f"请确保生成的图片融合了所有参考图的元素，并遵守总体要求。"
+            f"Based on the above reference images and their descriptions, "
+            f"generate a new fused image according to the following instructions:\n\n"
+            f"{overall_prompt}"
         )))
 
         contents = [types.Content(role="user", parts=parts)]
@@ -126,6 +171,11 @@ class GoogleAIClient:
             response = await self.client.aio.models.generate_content(
                 model=model,
                 contents=contents,
+                config=types.GenerateContentConfig(
+                    image_config=types.ImageConfig(
+                        aspect_ratio=aspect_ratio,
+                    ),
+                ),
             )
         except Exception as e:
             logger.error("[Gemini] Multi-image API request failed: %s", e)

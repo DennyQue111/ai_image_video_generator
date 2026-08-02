@@ -75,6 +75,23 @@ def _to_full_url(url: str) -> str:
     return url
 
 
+def _compute_aspect_ratio(width: int, height: int) -> str:
+    """根据宽高计算最接近的标准 aspect ratio 字符串"""
+    from math import gcd
+    g = gcd(width, height)
+    w = width // g
+    h = height // g
+    # 匹配 Gemini 支持的标准比例
+    standard = {
+        (1, 1): "1:1",
+        (16, 9): "16:9",
+        (9, 16): "9:16",
+        (4, 3): "4:3",
+        (3, 4): "3:4",
+    }
+    return standard.get((w, h), f"{w}:{h}")
+
+
 def _apply_style(prompt: str, style: str) -> str:
     """在 prompt 前追加风格提示词"""
     style_prompt = style_config.get_style_prompt(style)
@@ -250,7 +267,7 @@ async def text_to_image(request: TextToImageRequest):
             logger.error("[API] text-to-image failed: %s", e)
             raise HTTPException(status_code=500, detail=f"图片生成失败: {str(e)}")
 
-    elif request.model.startswith("gemini"):
+    elif request.model.startswith("gemini") or request.model.startswith("imagen"):
         try:
             client = GoogleAIClient()
         except ValueError as e:
@@ -258,10 +275,12 @@ async def text_to_image(request: TextToImageRequest):
             raise HTTPException(status_code=500, detail=str(e))
 
         try:
+            aspect_ratio = _compute_aspect_ratio(request.width, request.height)
             result = await client.generate_and_save(
                 prompt=full_prompt,
                 model=request.model,
                 save_dir=task_folder,
+                aspect_ratio=aspect_ratio,
             )
             relative_path = result["local_path"].relative_to(PROJECT_FILE_PATH)
             logger.info("[API] Gemini text-to-image success, saved=%s", result["local_path"])
@@ -343,7 +362,7 @@ async def image_to_image(request: ImageToImageRequest):
             logger.error("[API] image-to-image failed: %s", e)
             raise HTTPException(status_code=500, detail=f"图生图生成失败: {str(e)}")
 
-    elif request.model.startswith("gemini"):
+    elif request.model.startswith("gemini") or request.model.startswith("imagen"):
         try:
             client = GoogleAIClient()
         except ValueError as e:
@@ -361,11 +380,13 @@ async def image_to_image(request: ImageToImageRequest):
                 })
                 logger.info("[API] image-to-image loaded reference image %d, mime=%s", idx + 1, mime)
 
+            aspect_ratio = _compute_aspect_ratio(request.width, request.height)
             result = await client.generate_with_images_and_save(
                 overall_prompt=request.prompt,
                 image_descriptions=loaded_images,
                 model=request.model,
                 save_dir=task_folder,
+                aspect_ratio=aspect_ratio,
             )
             relative_path = result["local_path"].relative_to(PROJECT_FILE_PATH)
             logger.info("[API] Gemini image-to-image success, saved=%s", result["local_path"])
