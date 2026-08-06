@@ -13,21 +13,23 @@ logger = logging.getLogger(__name__)
 
 class GoogleAIClient:
     def __init__(self, api_key: Optional[str] = None, timeout_seconds: int = 120):
-        # 兼容 GEMINI_API_KEY（AI Studio 默认变量名）和 GOOGLE_AI_STUDIO_API_KEY
-        self.api_key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_AI_STUDIO_API_KEY")
-        if not self.api_key:
+        # 官方 SDK 自动从 GEMINI_API_KEY 环境变量加载，兼容 GOOGLE_AI_STUDIO_API_KEY
+        key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_AI_STUDIO_API_KEY")
+        if not key:
             logger.error("GEMINI_API_KEY (或 GOOGLE_AI_STUDIO_API_KEY) 未在环境中配置")
             raise ValueError("GEMINI_API_KEY (或 GOOGLE_AI_STUDIO_API_KEY) 未在环境中配置")
+        os.environ["GEMINI_API_KEY"] = key
         logger.info("GoogleAIClient initialized, timeout=%ss", timeout_seconds)
+        # 与 Google AI Studio 应用一致：添加 aistudio-build User-Agent
         self.client = genai.Client(
-            api_key=self.api_key,
             http_options=types.HttpOptions(
                 timeout=timeout_seconds * 1000,
-            ),
+                headers={"User-Agent": "aistudio-build"},
+            )
         )
 
     def is_available(self) -> bool:
-        return bool(self.api_key)
+        return bool(os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_AI_STUDIO_API_KEY"))
 
     async def generate_concept_image(
         self,
@@ -69,7 +71,7 @@ class GoogleAIClient:
                 logger.error("[Gemini] Imagen API request failed: %s", e)
                 raise
 
-        # Gemini 系列模型使用 generateContent 方法
+        # Gemini 系列模型使用 generateContent 方法（与官方示例一致）
         try:
             response = await self.client.aio.models.generate_content(
                 model=model,
