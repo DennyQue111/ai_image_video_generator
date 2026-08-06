@@ -64,6 +64,19 @@ class ImageToVideoRequest(BaseModel):
     fps: int = 24
 
 
+class InpaintRequest(BaseModel):
+    prompt: str
+    model: str = "gemini-2.5-flash-image"
+    base_image: str = Field(..., description="原图 URL 或 data URL")
+    mask_image: str = Field(..., description="遮罩图 data URL（白色=需修复区域）")
+    aspect_ratio: str = "1:1"
+
+
+class ImageToPromptRequest(BaseModel):
+    image: str = Field(..., description="图片 URL 或 data URL")
+    model: str = "gemini-2.5-flash"
+
+
 # ============ 辅助函数 ============
 
 def _to_full_url(url: str) -> str:
@@ -497,3 +510,100 @@ async def image_to_video(request: ImageToVideoRequest):
     except Exception as e:
         logger.error("[API] image-to-video failed: %s", e)
         raise HTTPException(status_code=500, detail=f"视频生成失败: {str(e)}")
+
+
+# ============ Gemini 图像修复 (Inpainting) ============
+
+def _decode_data_url(data_url: str):
+    """解析 data URL，返回 (bytes, mime_type)"""
+    import base64
+    if data_url.startswith("data:"):
+        # data:image/png;base64,xxxx
+        header, b64data = data_url.split(",", 1)
+        mime = header.split(":")[1].split(";")[0]
+        return base64.b64decode(b64data), mime
+    raise ValueError("Not a data URL")
+
+
+@router.post("/api/gemini-inpaint")
+async def gemini_inpaint(request: InpaintRequest):
+    """Gemini 图像修复：base image + mask + prompt → new image"""
+    logger.info("[API] /api/gemini-inpaint called, model=%s", request.model)
+
+    try:
+        client = GoogleAIClient()
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    try:
+        # 解析 base image
+        if request.base_image.startswith("data:"):
+            base_data, base_mime = _decode_data_url(request.base_image)
+        else:
+            base_data, base_mime, _ = _resolve_image_data(_to_full_url(request.base_image))
+
+        # 解析 mask image
+        if request.mask_image.startswith("data:"):
+            mask_data, _ = _decode_data_url(request.mask_image)
+        else:
+            mask_data, _, _ = _resolve_image_data(_to_full_url(request.mask_image))
+
+        task_folder = OUTPUT_DIR / "inpaint"
+        result = await client.generate_inpaint_and_save(
+            prompt=request.prompt,
+            base_image_data=base_data,
+            base_image_mime=base_mime,
+            mask_image_data=mask_data,
+            model=request.model,
+            save_dir=task_folder,
+            aspect_ratio=request.aspect_ratio,
+        )
+        relative_path = result["local_path"].relative_to(PROJECT_FILE_PATH)
+        logger.info("[API] gemini-inpaint success, saved=%s", result["local_path"])
+        return {
+            "success": True,
+            "model": request.model,
+            "images": [
+                {
+                    "filename": result["filename"],
+                    "local_path": str(result["local_path"]),
+                    "url": f"/static/projects/{relative_path.as_posix()}",
+                }
+            ],
+        }
+    except Exception as e:
+        logger.error("[API] gemini-inpaint failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"图像修复失败: {str(e)}")
+
+
+# ============ Gemini 图生提示词 (Image-to-Prompt) ============
+
+@router.post("/api/gemini-image-to-prompt")
+async def gemini_image_to_prompt(request: ImageToPromptRequest):
+    """Gemini 图生提示词：分析图片，提取结构化风格信息"""
+    logger.info("[API] /api/gemini-image-to-prompt called, model=%s", request.model)
+
+    try:
+        client = GoogleAIClient()
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    try:
+        if request.image.startswith("data:"):
+            img_data, img_mime = _decode_data_url(request.image)
+        else:
+            img_data, img_mime, _ = _resolve_image_data(_to_full_url(request.image))
+
+        result = await client.image_to_prompt(
+            image_data=img_data,
+            image_mime=img_mime,
+            model=request.model,
+        )
+        logger.info("[API] gemini-image-to-prompt success")
+        return {
+            "success": True,
+            "data": result,
+        }
+    except Exception as e:
+        logger.error("[API] gemini-image-to-prompt failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"图片分析失败: {str(e)}")

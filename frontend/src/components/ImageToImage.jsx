@@ -13,6 +13,10 @@ const MODEL_OPTIONS = [
   {
     group: 'Google Gemini',
     options: [
+      { value: 'gemini-3.1-flash-lite-image', label: 'Gemini 3.1 Flash Lite (快速)' },
+      { value: 'gemini-3.1-flash-image', label: 'Gemini 3.1 Flash (高质量)' },
+      { value: 'gemini-3-pro-image', label: 'Gemini 3 Pro (旗舰)' },
+      { value: 'imagen-3.0-generate-002', label: 'Imagen 3.0' },
       { value: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image（多图合成）' },
     ],
   },
@@ -28,6 +32,7 @@ export default function ImageToImage() {
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
+  const [aspectRatio, setAspectRatio] = useState('1:1')
   const fileInputRef = useRef(null)
 
   useEffect(() => {
@@ -103,6 +108,7 @@ export default function ImageToImage() {
         negative_prompt: negativePrompt,
         model,
         style,
+        aspect_ratio: isGemini ? aspectRatio : undefined,
         images: readyImages.map((img) => ({
           url: img.serverUrl,
           description: img.description,
@@ -119,6 +125,8 @@ export default function ImageToImage() {
       setLoading(false)
     }
   }
+
+  const isGemini = model.startsWith('gemini') || model.startsWith('imagen')
 
   return (
     <div className="generator-page">
@@ -146,6 +154,36 @@ export default function ImageToImage() {
             </select>
           </div>
         </div>
+
+        {isGemini && (
+          <div className="form-row">
+            <div className="form-group full">
+              <label className="form-label">比例</label>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                {['1:1', '16:9', '9:16', '4:3', '3:4'].map((r) => (
+                  <button
+                    key={r}
+                    type="button"
+                    className={`form-select ${aspectRatio === r ? 'active' : ''}`}
+                    style={{
+                      flex: 1,
+                      padding: '8px 12px',
+                      border: aspectRatio === r ? '1px solid var(--accent)' : '1px solid var(--border)',
+                      borderRadius: 'var(--radius)',
+                      background: aspectRatio === r ? 'var(--accent)' : 'var(--bg-primary)',
+                      color: aspectRatio === r ? 'white' : 'var(--text-primary)',
+                      cursor: 'pointer',
+                      fontSize: '14px',
+                    }}
+                    onClick={() => setAspectRatio(r)}
+                  >
+                    {r}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="form-row">
           <div className="form-group full">

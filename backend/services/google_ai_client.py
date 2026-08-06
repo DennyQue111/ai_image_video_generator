@@ -2,6 +2,7 @@
 import logging
 import os
 import uuid
+import json
 from pathlib import Path
 from typing import Optional, List, Dict
 
@@ -221,3 +222,137 @@ class GoogleAIClient:
 
         logger.error("[Gemini] No image data returned for multi-image input")
         raise RuntimeError("No image data returned from Gemini API for multi-image input")
+
+    async def generate_inpaint_and_save(
+        self,
+        prompt: str,
+        base_image_data: bytes,
+        base_image_mime: str,
+        mask_image_data: bytes,
+        model: str,
+        save_dir: Path,
+        aspect_ratio: str = "1:1",
+    ) -> Dict:
+        """图像修复：base image + mask + prompt → new image"""
+        logger.info("[Gemini] generate_inpaint_and_save, model=%s, aspect_ratio=%s", model, aspect_ratio)
+
+        parts = [
+            types.Part.from_bytes(data=base_image_data, mime_type=base_image_mime),
+            types.Part.from_bytes(data=mask_image_data, mime_type="image/png"),
+            types.Part(text=(
+                f"Inpaint the specified region highlighted in white in the mask image. "
+                f"Please fill it or replace it with: {prompt}"
+            )),
+        ]
+
+        contents = [types.Content(role="user", parts=parts)]
+
+        try:
+            response = await self.client.aio.models.generate_content(
+                model=model,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    image_config=types.ImageConfig(
+                        aspect_ratio=aspect_ratio,
+                    ),
+                ),
+            )
+        except Exception as e:
+            logger.error("[Gemini] Inpaint API request failed: %s", e)
+            raise
+
+        if not response.candidates:
+            feedback = response.prompt_feedback
+            reason = feedback.block_reason.name if feedback and feedback.block_reason else "UNKNOWN"
+            logger.error("[Gemini] Inpaint API rejected, block_reason=%s", reason)
+            raise RuntimeError(f"Gemini API 拒绝了请求 (block_reason={reason})")
+
+        logger.info("[Gemini] Inpaint response received, candidates=%d", len(response.candidates))
+        for candidate in response.candidates:
+            if not candidate.content:
+                continue
+            for part in candidate.content.parts or []:
+                if part.inline_data and part.inline_data.data:
+                    image_data = part.inline_data.data
+                    mime_type = part.inline_data.mime_type or "image/png"
+                    ext = "png" if "png" in mime_type else "jpg" if "jpg" in mime_type or "jpeg" in mime_type else "webp"
+                    filename = f"gemini_inpaint_{uuid.uuid4().hex[:8]}.{ext}"
+                    save_dir.mkdir(parents=True, exist_ok=True)
+                    local_path = save_dir / filename
+                    with open(local_path, "wb") as f:
+                        f.write(image_data)
+                    logger.info("[Gemini] Inpaint result saved, size=%d bytes", len(image_data))
+                    return {
+                        "filename": filename,
+                        "local_path": local_path,
+                    }
+
+        logger.error("[Gemini] No image data returned for inpaint")
+        raise RuntimeError("No image data returned from Gemini API for inpaint")
+
+    async def image_to_prompt(
+        self,
+        image_data: bytes,
+        image_mime: str,
+        model: str = "gemini-2.5-flash",
+    ) -> Dict:
+        """图生提示词：分析图片，提取结构化风格信息"""
+        logger.info("[Gemini] image_to_prompt called, model=%s", model)
+
+        parts = [
+            types.Part.from_bytes(data=image_data, mime_type=image_mime),
+            types.Part(text=(
+                "Analyze this image in extreme detail. Break down its visual properties into: "
+                "subjectDescription (vivid, clear subject), "
+                "styleSignature (dense, cohesive, reusable keywords of style, medium, lens, camera, lighting, colors, textures), "
+                "fullPrompt (combines subject + styleSignature), "
+                "styleType ('realistic' | 'artistic/animation' | 'graphic/other'), "
+                "and nested styleDetails containing: generalStyle, colors, materialOrTextures, lighting, cameraDetails, atmosphere."
+            )),
+        ]
+
+        contents = [types.Content(role="user", parts=parts)]
+
+        response_schema = types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "subjectDescription": types.Schema(type=types.Type.STRING),
+                "styleSignature": types.Schema(type=types.Type.STRING),
+                "fullPrompt": types.Schema(type=types.Type.STRING),
+                "styleType": types.Schema(type=types.Type.STRING),
+                "styleDetails": types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "generalStyle": types.Schema(type=types.Type.STRING),
+                        "colors": types.Schema(type=types.Type.STRING),
+                        "materialOrTextures": types.Schema(type=types.Type.STRING),
+                        "lighting": types.Schema(type=types.Type.STRING),
+                        "cameraDetails": types.Schema(type=types.Type.STRING),
+                        "atmosphere": types.Schema(type=types.Type.STRING),
+                    },
+                    required=["generalStyle", "colors", "materialOrTextures", "lighting", "cameraDetails", "atmosphere"],
+                ),
+            },
+            required=["subjectDescription", "styleSignature", "fullPrompt", "styleType", "styleDetails"],
+        )
+
+        try:
+            response = await self.client.aio.models.generate_content(
+                model=model,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=response_schema,
+                ),
+            )
+        except Exception as e:
+            logger.error("[Gemini] Image-to-prompt API request failed: %s", e)
+            raise
+
+        response_text = response.text
+        if not response_text:
+            raise RuntimeError("Gemini API 返回空响应")
+
+        result = json.loads(response_text.strip())
+        logger.info("[Gemini] Image-to-prompt success, styleType=%s", result.get("styleType"))
+        return result

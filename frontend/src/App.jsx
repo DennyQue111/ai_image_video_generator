@@ -1,14 +1,18 @@
 import { useState } from 'react'
-import { Image, Video, Sparkles } from 'lucide-react'
+import { Image, Video, Sparkles, Brush, ScanText } from 'lucide-react'
 import TextToImage from './components/TextToImage'
 import ImageToImage from './components/ImageToImage'
 import ImageToVideo from './components/ImageToVideo'
+import ImageInpainting from './components/ImageInpainting'
+import ImageToPrompt from './components/ImageToPrompt'
 import './styles/App.css'
 
 const TABS = [
   { id: 'text-to-image', label: '文生图', icon: Image },
   { id: 'image-to-image', label: '图生图', icon: Image },
   { id: 'image-to-video', label: '图生视频', icon: Video },
+  { id: 'image-inpainting', label: '图像修复', icon: Brush },
+  { id: 'image-to-prompt', label: '图生提示词', icon: ScanText },
 ]
 
 function App() {
@@ -23,7 +27,7 @@ function App() {
           </div>
           <div>
             <h1 className="app-title">AI 图片视频生成器</h1>
-            <p className="app-subtitle">文生图 · 图生图 · 图生视频</p>
+            <p className="app-subtitle">文生图 · 图生图 · 图生视频 · 图像修复 · 图生提示词</p>
           </div>
         </div>
       </header>
@@ -48,6 +52,8 @@ function App() {
         {activeTab === 'text-to-image' && <TextToImage />}
         {activeTab === 'image-to-image' && <ImageToImage />}
         {activeTab === 'image-to-video' && <ImageToVideo />}
+        {activeTab === 'image-inpainting' && <ImageInpainting />}
+        {activeTab === 'image-to-prompt' && <ImageToPrompt />}
       </main>
 
       <footer className="app-footer">

@@ -13,7 +13,11 @@ const MODEL_OPTIONS = [
   {
     group: 'Google Gemini',
     options: [
-      { value: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image' },
+      { value: 'gemini-3.1-flash-lite-image', label: 'Gemini 3.1 Flash Lite (快速)' },
+      { value: 'gemini-3.1-flash-image', label: 'Gemini 3.1 Flash (高质量)' },
+      { value: 'gemini-3-pro-image', label: 'Gemini 3 Pro (旗舰)' },
+      { value: 'imagen-3.0-generate-002', label: 'Imagen 3.0' },
+      { value: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image (兼容)' },
     ],
   },
 ]
@@ -32,6 +36,7 @@ export default function TextToImage() {
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
+  const [aspectRatio, setAspectRatio] = useState('1:1')
 
   useEffect(() => {
     axios.get('/api/styles').then((res) => {
@@ -61,6 +66,7 @@ export default function TextToImage() {
         steps,
         cfg,
         seed,
+        aspect_ratio: isComfyUI ? undefined : aspectRatio,
       })
       if (response.data.success) {
         setResult(response.data)
@@ -190,6 +196,36 @@ export default function TextToImage() {
                 value={seed}
                 onChange={(e) => setSeed(Number(e.target.value))}
               />
+            </div>
+          </div>
+        )}
+
+        {!isComfyUI && (
+          <div className="form-row">
+            <div className="form-group full">
+              <label className="form-label">比例</label>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                {['1:1', '16:9', '9:16', '4:3', '3:4'].map((r) => (
+                  <button
+                    key={r}
+                    type="button"
+                    className={`form-select ${aspectRatio === r ? 'active' : ''}`}
+                    style={{
+                      flex: 1,
+                      padding: '8px 12px',
+                      border: aspectRatio === r ? '1px solid var(--accent)' : '1px solid var(--border)',
+                      borderRadius: 'var(--radius)',
+                      background: aspectRatio === r ? 'var(--accent)' : 'var(--bg-primary)',
+                      color: aspectRatio === r ? 'white' : 'var(--text-primary)',
+                      cursor: 'pointer',
+                      fontSize: '14px',
+                    }}
+                    onClick={() => setAspectRatio(r)}
+                  >
+                    {r}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         )}
