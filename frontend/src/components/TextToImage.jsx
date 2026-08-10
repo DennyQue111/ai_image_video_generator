@@ -8,6 +8,8 @@ const MODEL_OPTIONS = [
     group: 'ComfyUI 工作流',
     options: [
       { value: 'comfyui-qwen-image', label: 'QwenImage 文生图' },
+      { value: 'comfyui-flux-dev', label: 'Flux.1 Dev FP8（高质量，非商用）' },
+      { value: 'comfyui-flux-schnell', label: 'Flux.1 Schnell FP8（快速，可商用）' },
     ],
   },
   {
@@ -45,6 +47,20 @@ export default function TextToImage() {
       }
     })
   }, [])
+
+  // 切换模型时，设置合适的 ComfyUI 参数默认值
+  useEffect(() => {
+    if (model === 'comfyui-flux-dev') {
+      setSteps(20)
+      setCfg(1.0)
+    } else if (model === 'comfyui-flux-schnell') {
+      setSteps(4)
+      setCfg(0)
+    } else if (model === 'comfyui-qwen-image') {
+      setSteps(8)
+      setCfg(1.0)
+    }
+  }, [model])
 
   const handleSubmit = async () => {
     if (!prompt.trim()) {
@@ -176,6 +192,7 @@ export default function TextToImage() {
                 className="form-input"
                 value={steps}
                 onChange={(e) => setSteps(Number(e.target.value))}
+                disabled={model === 'comfyui-flux-schnell'}
               />
             </div>
             <div className="form-group">
@@ -186,6 +203,7 @@ export default function TextToImage() {
                 className="form-input"
                 value={cfg}
                 onChange={(e) => setCfg(Number(e.target.value))}
+                disabled={model === 'comfyui-flux-schnell'}
               />
             </div>
             <div className="form-group">

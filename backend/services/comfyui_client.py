@@ -476,6 +476,196 @@ class ComfyUIClient:
 
         return await self.wait_for_completion(prompt_id, timeout=timeout)
 
+    # ============== Flux 文生图 / 图生图 ==============
+
+    def _build_flux_t2i_workflow(
+        self,
+        prompt: str,
+        width: int = 1024,
+        height: int = 1024,
+        steps: int = 20,
+        cfg: float = 1.0,
+        seed: int = -1,
+        checkpoint: str = "flux1-dev-fp8.safetensors",
+    ) -> Dict[str, Any]:
+        """构建 Flux 文生图工作流"""
+        import random
+        if seed == -1:
+            seed = random.randint(0, 2**32 - 1)
+
+        workflow = {
+            "10": {
+                "class_type": "CheckpointLoaderSimple",
+                "inputs": {"ckpt_name": checkpoint},
+            },
+            "6": {
+                "class_type": "CLIPTextEncode",
+                "inputs": {"text": prompt, "clip": ["10", 0]},
+            },
+            "7": {
+                "class_type": "CLIPTextEncode",
+                "inputs": {"text": "", "clip": ["10", 0]},
+            },
+            "5": {
+                "class_type": "EmptySD3LatentImage",
+                "inputs": {"width": width, "height": height, "batch_size": 1},
+            },
+            "3": {
+                "class_type": "KSampler",
+                "inputs": {
+                    "seed": seed,
+                    "steps": steps,
+                    "cfg": cfg,
+                    "sampler_name": "euler",
+                    "scheduler": "simple",
+                    "denoise": 1.0,
+                    "model": ["10", 0],
+                    "positive": ["6", 0],
+                    "negative": ["7", 0],
+                    "latent_image": ["5", 0],
+                },
+            },
+            "8": {
+                "class_type": "VAEDecode",
+                "inputs": {"samples": ["3", 0], "vae": ["10", 2]},
+            },
+            "9": {
+                "class_type": "SaveImage",
+                "inputs": {"images": ["8", 0], "filename_prefix": "flux_t2i"},
+            },
+        }
+        return workflow
+
+    def _build_flux_kontext_i2i_workflow(
+        self,
+        prompt: str,
+        seed: int = -1,
+        steps: int = 25,
+        cfg: float = 2.5,
+    ) -> Dict[str, Any]:
+        """构建 Flux Kontext 图生图工作流"""
+        import random
+        if seed == -1:
+            seed = random.randint(0, 2**32 - 1)
+
+        workflow = {
+            "10": {
+                "class_type": "LoadImage",
+                "inputs": {"image": ""},  # 运行时注入
+            },
+            "12": {
+                "class_type": "LoadDiffusionModel",
+                "inputs": {"model_name": "flux1-dev-kontext_fp8_scaled.safetensors"},
+            },
+            "11": {
+                "class_type": "DualCLIPLoader",
+                "inputs": {
+                    "clip_name1": "clip_l.safetensors",
+                    "clip_name2": "t5xxl_fp8_e4m3fn.safetensors",
+                    "type": "flux",
+                },
+            },
+            "6": {
+                "class_type": "CLIPTextEncode",
+                "inputs": {"text": prompt, "clip": ["11", 0]},
+            },
+            "7": {
+                "class_type": "CLIPTextEncode",
+                "inputs": {"text": "", "clip": ["11", 0]},
+            },
+            "13": {
+                "class_type": "VAELoader",
+                "inputs": {"vae_name": "ae.safetensors"},
+            },
+            "14": {
+                "class_type": "VAEEncode",
+                "inputs": {"pixels": ["10", 0], "vae": ["13", 0]},
+            },
+            "3": {
+                "class_type": "KSampler",
+                "inputs": {
+                    "seed": seed,
+                    "steps": steps,
+                    "cfg": cfg,
+                    "sampler_name": "euler",
+                    "scheduler": "simple",
+                    "denoise": 1.0,
+                    "model": ["12", 0],
+                    "positive": ["6", 0],
+                    "negative": ["7", 0],
+                    "latent_image": ["14", 0],
+                },
+            },
+            "8": {
+                "class_type": "VAEDecode",
+                "inputs": {"samples": ["3", 0], "vae": ["13", 0]},
+            },
+            "9": {
+                "class_type": "SaveImage",
+                "inputs": {"images": ["8", 0], "filename_prefix": "flux_kontext_i2i"},
+            },
+        }
+        return workflow
+
+    async def _submit_and_wait(
+        self,
+        workflow: Dict[str, Any],
+        timeout: int,
+        task_name: str,
+    ) -> Dict[str, Any]:
+        """提交工作流并等待完成"""
+        async with aiohttp.ClientSession() as session:
+            payload = {"prompt": workflow, "client_id": self.client_id}
+            async with session.post(
+                f"{self.base_url}/prompt", json=payload
+            ) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    logger.error("[ComfyUI] Failed to queue %s: %s", task_name, error_text)
+                    raise Exception(f"Failed to queue {task_name}: {error_text}")
+                result = await resp.json()
+                prompt_id = result["prompt_id"]
+                logger.info("[ComfyUI] %s queued, prompt_id=%s", task_name, prompt_id)
+        return await self.wait_for_completion(prompt_id, timeout=timeout)
+
+    async def generate_flux_t2i_and_wait(
+        self,
+        prompt: str,
+        width: int = 1024,
+        height: int = 1024,
+        steps: int = 20,
+        cfg: float = 1.0,
+        seed: int = -1,
+        checkpoint: str = "flux1-dev-fp8.safetensors",
+        timeout: int = 300,
+    ) -> Dict[str, Any]:
+        """使用 Flux 模型生成图片"""
+        logger.info("[ComfyUI] generate_flux_t2i_and_wait, checkpoint=%s, %dx%d, steps=%d",
+                    checkpoint, width, height, steps)
+        workflow = self._build_flux_t2i_workflow(
+            prompt=prompt, width=width, height=height, steps=steps, cfg=cfg, seed=seed, checkpoint=checkpoint
+        )
+        return await self._submit_and_wait(workflow, timeout, "Flux t2i")
+
+    async def generate_flux_kontext_i2i_and_wait(
+        self,
+        source_image_url: str,
+        edit_prompt: str,
+        steps: int = 25,
+        cfg: float = 2.5,
+        seed: int = -1,
+        timeout: int = 300,
+    ) -> Dict[str, Any]:
+        """使用 Flux Kontext 进行图片编辑"""
+        logger.info("[ComfyUI] generate_flux_kontext_i2i_and_wait, source=%s", source_image_url)
+        workflow = self._build_flux_kontext_i2i_workflow(
+            prompt=edit_prompt, seed=seed, steps=steps, cfg=cfg
+        )
+        # 上传源图片
+        upload_result = await self.upload_image(source_image_url)
+        workflow["10"]["inputs"]["image"] = upload_result["name"]
+        return await self._submit_and_wait(workflow, timeout, "Flux Kontext i2i")
+
     def get_image_url(self, filename: str, subfolder: str = "", type: str = "output") -> str:
         """获取生成图片的 URL"""
         return f"{self.base_url}/view?filename={filename}&subfolder={subfolder}&type={type}"
@@ -2981,20 +3171,27 @@ class ComfyUIClient:
 
             # 3. 将 widgets_values 映射到参数名
             # 即使参数已通过连接提供，仍需推进 wv_idx 以保持对齐
-            wv_idx = 0
-            for param_name in all_widget_params:
-                if wv_idx >= len(widgets_values):
-                    break
-                val = widgets_values[wv_idx]
-                # 仅在未被连接覆盖时赋值
-                if param_name not in connected_names:
-                    inputs_dict[param_name] = val
-                wv_idx += 1
-                # 跳过 control_after_generate（紧跟在 seed 类参数后面的前端专用值）
-                if ("seed" in param_name.lower()) and wv_idx < len(widgets_values):
-                    next_val = widgets_values[wv_idx]
-                    if isinstance(next_val, str) and next_val in ("fixed", "increment", "decrement", "randomize"):
-                        wv_idx += 1
+            if isinstance(widgets_values, dict):
+                # 新版 ComfyUI 字典格式：直接用键名作为参数名
+                for k, v in widgets_values.items():
+                    if k not in connected_names:
+                        inputs_dict[k] = v
+            else:
+                # 传统列表格式：按顺序映射到 widget 参数
+                wv_idx = 0
+                for param_name in all_widget_params:
+                    if wv_idx >= len(widgets_values):
+                        break
+                    val = widgets_values[wv_idx]
+                    # 仅在未被连接覆盖时赋值
+                    if param_name not in connected_names:
+                        inputs_dict[param_name] = val
+                    wv_idx += 1
+                    # 跳过 control_after_generate（紧跟在 seed 类参数后面的前端专用值）
+                    if ("seed" in param_name.lower()) and wv_idx < len(widgets_values):
+                        next_val = widgets_values[wv_idx]
+                        if isinstance(next_val, str) and next_val in ("fixed", "increment", "decrement", "randomize"):
+                            wv_idx += 1
 
             api_workflow[node_id] = {
                 "class_type": class_type,
@@ -3250,6 +3447,185 @@ class ComfyUIClient:
 
         logger.error("[ComfyUI] LTX video generation timed out after %ss", timeout)
         raise TimeoutError(f"LTX video generation timed out after {timeout}s")
+
+    # ============ MiniMax H3 图生视频 ============
+
+    # Ref2VA 流程的节点 ID（工作流中的第 3 个子流程，支持多图参考）
+    _MINIMAX_FLOW3_IDS = {
+        339, 340, 343, 345, 346, 347, 348, 349, 350, 351,
+        352, 353, 354, 355, 356, 357, 358, 360, 361, 362,
+        363, 364, 365,
+    }
+    # LoadImage 节点与 ref_image 索引的映射
+    _MINIMAX_IMG_NODE_MAP = {0: "362", 1: "364", 2: "365"}
+
+    async def generate_minimax_h3_video_and_wait(
+        self,
+        prompt: str,
+        reference_image_urls: List[str],
+        width: int = 1344,
+        height: int = 768,
+        duration_seconds: float = 8,
+        fps: int = 24,
+        seed: int = -1,
+        save_prefix: str = "video/MiniMax_H3",
+        timeout: int = 1800,
+    ) -> Dict[str, Any]:
+        """
+        使用 MiniMax H3 Ref2VA 工作流生成视频（多图参考生视频）
+
+        Args:
+            prompt: 视频 prompt（英文）
+            reference_image_urls: 参考图片 URL 列表（1-9 张）
+            width: 视频宽度
+            height: 视频高度
+            duration_seconds: 视频时长（秒）
+            fps: 帧率
+            seed: 随机种子，-1 为随机
+            save_prefix: 保存文件名前缀
+            timeout: 超时时间（秒）
+        """
+        if not reference_image_urls:
+            raise ValueError("至少需要 1 张参考图片")
+
+        logger.info("[ComfyUI] MiniMax H3 generate, images=%d, %dx%d, duration=%ss, fps=%d",
+                    len(reference_image_urls), width, height, duration_seconds, fps)
+
+        # 1. 上传参考图片到 ComfyUI
+        uploaded_filenames = []
+        for i, url in enumerate(reference_image_urls):
+            logger.info("[ComfyUI] MiniMax H3 uploading ref image %d/%d", i + 1, len(reference_image_urls))
+            result = await self.upload_image(url)
+            uploaded_filenames.append(result["name"])
+            logger.info("[ComfyUI] MiniMax H3 ref image %d uploaded: %s", i + 1, result["name"])
+
+        # 2. 加载工作流 JSON 并筛选 Ref2VA 流程
+        config_dir = Path(__file__).parent.parent / "config"
+        workflow_path = config_dir / "minimax_h3_full_workflow.json"
+        if not workflow_path.exists():
+            raise Exception(f"MiniMax H3 workflow not found: {workflow_path}")
+
+        with open(workflow_path, "r", encoding="utf-8") as f:
+            workflow_json = json.load(f)
+
+        # 筛选节点：只保留 Ref2VA 流程的节点
+        flow_ids = self._MINIMAX_FLOW3_IDS
+        workflow_json["nodes"] = [n for n in workflow_json["nodes"] if n["id"] in flow_ids]
+        workflow_json["links"] = [
+            l for l in workflow_json["links"]
+            if l[1] in flow_ids and l[3] in flow_ids
+        ]
+        # 重置所有节点的 mode 为 0（正常模式），因为工作流保存时这些节点可能是 bypassed (mode=4)
+        for n in workflow_json["nodes"]:
+            n["mode"] = 0
+        logger.info("[ComfyUI] MiniMax H3 filtered to %d nodes, %d links",
+                    len(workflow_json["nodes"]), len(workflow_json["links"]))
+
+        # 3. 转换为 API 格式
+        api_workflow = await self._convert_workflow_to_api(workflow_json)
+        logger.info("[ComfyUI] MiniMax H3 workflow converted, nodes=%d", len(api_workflow))
+
+        # 4. 注入参数
+        if seed == -1:
+            seed = uuid.uuid4().int % (2**32)
+
+        # Node 339: PrimitiveStringMultiline — prompt
+        if "339" in api_workflow:
+            api_workflow["339"]["inputs"]["value"] = prompt
+            logger.info("[ComfyUI] MiniMax H3 injected prompt into node 339")
+
+        # Node 350: PrimitiveFloat — duration
+        if "350" in api_workflow:
+            api_workflow["350"]["inputs"]["value"] = duration_seconds
+            logger.info("[ComfyUI] MiniMax H3 injected duration=%s into node 350", duration_seconds)
+
+        # Node 348: RandomNoise — seed
+        if "348" in api_workflow:
+            api_workflow["348"]["inputs"]["noise_seed"] = seed
+            logger.info("[ComfyUI] MiniMax H3 injected seed=%s into node 348", seed)
+
+        # Node 363: MiniMaxH3AudioConditioningT8 — 覆盖 width/height/length
+        if "363" in api_workflow:
+            # 覆盖 width/height（断开 ResolutionSelector 的连接，直接设值）
+            api_workflow["363"]["inputs"]["width"] = width
+            api_workflow["363"]["inputs"]["height"] = height
+            # 覆盖 length（断开 ComfyMathExpression 的连接，直接设值）
+            total_frames = int(duration_seconds * fps)
+            api_workflow["363"]["inputs"]["length"] = total_frames
+            logger.info("[ComfyUI] MiniMax H3 injected %dx%d, length=%d into node 363",
+                        width, height, total_frames)
+
+        # Node 360: VHS_VideoCombine — 帧率和保存前缀
+        if "360" in api_workflow:
+            api_workflow["360"]["inputs"]["frame_rate"] = fps
+            api_workflow["360"]["inputs"]["filename_prefix"] = save_prefix
+            logger.info("[ComfyUI] MiniMax H3 injected fps=%d, prefix=%s into node 360",
+                        fps, save_prefix)
+
+        # Node 353: MiniMaxH3MemoryEfficientSageAttentionPatch — RTX 5070 不支持 SageAttention
+        # 跳过此节点，将 355 (ReservedVRAMSetter) 直接连到 354 (LoraLoaderModelOnly)
+        if "353" in api_workflow and "354" in api_workflow:
+            del api_workflow["353"]
+            api_workflow["354"]["inputs"]["model"] = ["355", 0]
+            logger.info("[ComfyUI] MiniMax H3 skipped SageAttention patch (353), connected 355->354 directly")
+
+        # Node 361: LoadAudio — 移除未连接的音频加载节点（避免引用不存在的文件）
+        if "361" in api_workflow:
+            del api_workflow["361"]
+            logger.info("[ComfyUI] MiniMax H3 removed orphan LoadAudio node (361)")
+
+        # 5. 处理参考图片：注入 LoadImage 节点
+        num_images = len(uploaded_filenames)
+        for i, filename in enumerate(uploaded_filenames):
+            if i < 3:
+                # 使用工作流中已有的 LoadImage 节点
+                node_id = self._MINIMAX_IMG_NODE_MAP[i]
+                if node_id in api_workflow:
+                    api_workflow[node_id]["inputs"]["image"] = filename
+                    logger.info("[ComfyUI] MiniMax H3 ref_image_%d -> node %s, file=%s",
+                                i, node_id, filename)
+            else:
+                # 为第 4-9 张图片创建新的 LoadImage 节点
+                new_node_id = str(400 + i)
+                api_workflow[new_node_id] = {
+                    "class_type": "LoadImage",
+                    "inputs": {"image": filename},
+                }
+                api_workflow["363"]["inputs"][f"ref_images.ref_image_{i}"] = [new_node_id, 0]
+                logger.info("[ComfyUI] MiniMax H3 ref_image_%d -> new node %s, file=%s",
+                            i, new_node_id, filename)
+
+        # 移除未使用的 LoadImage 节点和 ref_image 连接
+        for i in range(num_images, 3):
+            node_id = self._MINIMAX_IMG_NODE_MAP[i]
+            if node_id in api_workflow:
+                del api_workflow[node_id]
+            ref_key = f"ref_images.ref_image_{i}"
+            if "363" in api_workflow and ref_key in api_workflow["363"]["inputs"]:
+                del api_workflow["363"]["inputs"][ref_key]
+            logger.info("[ComfyUI] MiniMax H3 removed unused ref_image_%d (node %s)", i, node_id)
+
+        # 6. 提交并等待
+        logger.info("[ComfyUI] MiniMax H3 queuing workflow, nodes=%d", len(api_workflow))
+        async with aiohttp.ClientSession() as session:
+            payload = {"prompt": api_workflow, "client_id": self.client_id}
+            async with session.post(
+                f"{self.base_url}/prompt", json=payload
+            ) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    logger.error("[ComfyUI] MiniMax H3 queue failed: %s", error_text)
+                    raise Exception(f"Failed to queue MiniMax H3 video: {error_text}")
+                result = await resp.json()
+                prompt_id = result["prompt_id"]
+                logger.info("[ComfyUI] MiniMax H3 video queued, prompt_id=%s", prompt_id)
+
+        return await self._wait_for_ltx_video_completion(
+            prompt_id,
+            save_prefix=save_prefix,
+            comfyui_output_dir=self.comfyui_output_dir,
+            timeout=timeout,
+        )
 
 
 # 单例实例

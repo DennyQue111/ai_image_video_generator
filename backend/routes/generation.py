@@ -56,12 +56,15 @@ class ImageToImageRequest(BaseModel):
 
 class ImageToVideoRequest(BaseModel):
     prompt: str = Field(..., description="视频画面描述（英文）")
-    first_frame_image: str = Field(..., description="首帧图片 URL")
+    first_frame_image: str = Field("", description="首帧图片 URL（LTX 必填，MiniMax 用 reference_images）")
+    reference_images: list = Field(default=[], description="参考图片 URL 列表（MiniMax H3 用，1-9 张）")
     model: str = "comfyui-ltx"
     dialogue: str = ""
     voice_instruct: str = ""
     duration: float = 0
     fps: int = 24
+    width: int = 0
+    height: int = 0
 
 
 class InpaintRequest(BaseModel):
@@ -249,14 +252,42 @@ async def text_to_image(request: TextToImageRequest):
             raise HTTPException(status_code=503, detail="ComfyUI 未运行，请先启动 ComfyUI")
 
         try:
-            result = await comfyui.generate_concept_image_and_wait(
-                prompt=full_prompt,
-                width=request.width,
-                height=request.height,
-                steps=request.steps,
-                cfg=request.cfg,
-                seed=request.seed,
-            )
+            if request.model == "comfyui-flux-dev":
+                result = await comfyui.generate_flux_t2i_and_wait(
+                    prompt=full_prompt,
+                    width=request.width,
+                    height=request.height,
+                    steps=request.steps or 20,
+                    cfg=request.cfg if request.cfg is not None else 1.0,
+                    seed=request.seed,
+                    checkpoint="flux1-dev-fp8.safetensors",
+                    timeout=600,
+                )
+            elif request.model == "comfyui-flux-schnell":
+                result = await comfyui.generate_flux_t2i_and_wait(
+                    prompt=full_prompt,
+                    width=request.width,
+                    height=request.height,
+                    steps=4,
+                    cfg=0,
+                    seed=request.seed,
+                    checkpoint="flux1-schnell-fp8.safetensors",
+                    timeout=600,
+                )
+            elif request.model.startswith("comfyui-qwen"):
+                # 现有的 Qwen 逻辑
+                result = await comfyui.generate_concept_image_and_wait(
+                    prompt=full_prompt,
+                    width=request.width,
+                    height=request.height,
+                    steps=request.steps,
+                    cfg=request.cfg,
+                    seed=request.seed,
+                )
+            else:
+                logger.warning("[API] Unsupported ComfyUI model: %s", request.model)
+                raise HTTPException(status_code=400, detail=f"不支持的 ComfyUI 模型: {request.model}")
+
             images = result.get("images", [])
             if not images:
                 logger.error("[API] ComfyUI returned no images")
@@ -346,12 +377,27 @@ async def image_to_image(request: ImageToImageRequest):
         logger.info("[API] image-to-image using ComfyUI, source_url=%s", full_source_url)
 
         try:
-            result = await comfyui.generate_character_variant_and_wait(
-                source_image_url=full_source_url,
-                variant_prompt=request.prompt,
-                negative_prompt=request.negative_prompt,
-                timeout=300,
-            )
+            if request.model == "comfyui-flux-kontext":
+                result = await comfyui.generate_flux_kontext_i2i_and_wait(
+                    source_image_url=full_source_url,
+                    edit_prompt=request.prompt,
+                    steps=25,
+                    cfg=2.5,
+                    seed=-1,
+                    timeout=600,
+                )
+            elif request.model.startswith("comfyui-qwen"):
+                # 现有 QwenImage Edit 逻辑
+                result = await comfyui.generate_character_variant_and_wait(
+                    source_image_url=full_source_url,
+                    variant_prompt=request.prompt,
+                    negative_prompt=request.negative_prompt,
+                    timeout=300,
+                )
+            else:
+                logger.warning("[API] Unsupported ComfyUI model: %s", request.model)
+                raise HTTPException(status_code=400, detail=f"不支持的 ComfyUI 模型: {request.model}")
+
             images = result.get("images", [])
             if not images:
                 logger.error("[API] ComfyUI returned no images for img2img")
@@ -427,16 +473,14 @@ async def image_to_image(request: ImageToImageRequest):
 async def image_to_video(request: ImageToVideoRequest):
     """
     图生视频
-    - comfyui-ltx: 调用 ComfyUI LTX 2.3 工作流
+    - comfyui-ltx: 调用 ComfyUI LTX 2.3 工作流（首帧图生视频）
+    - comfyui-minimax: 调用 ComfyUI MiniMax H3 Ref2VA 工作流（多图参考生视频）
     """
     logger.info("[API] /api/image-to-video called, model=%s, fps=%s, duration=%s, has_dialogue=%s",
                 request.model, request.fps, request.duration, bool(request.dialogue))
     if not request.prompt.strip():
         logger.warning("[API] image-to-video prompt is empty")
         raise HTTPException(status_code=400, detail="prompt 不能为空")
-    if not request.first_frame_image:
-        logger.warning("[API] image-to-video first frame is empty")
-        raise HTTPException(status_code=400, detail="首帧图片 URL 不能为空")
 
     if not request.model.startswith("comfyui"):
         logger.warning("[API] image-to-video unsupported model: %s", request.model)
@@ -447,21 +491,51 @@ async def image_to_video(request: ImageToVideoRequest):
         logger.error("[API] ComfyUI not running")
         raise HTTPException(status_code=503, detail="ComfyUI 未运行，请先启动 ComfyUI")
 
-    first_frame_url = _to_full_url(request.first_frame_image)
     task_folder = OUTPUT_DIR / "image_to_video"
-    logger.info("[API] image-to-video first_frame=%s", first_frame_url)
 
     try:
-        result = await comfyui.generate_ltx_video_and_wait(
-            first_frame_image_url=first_frame_url,
-            video_prompt=request.prompt,
-            dialogue=request.dialogue,
-            voice_instruct=request.voice_instruct,
-            save_prefix=f"video/LTX_{uuid.uuid4().hex[:8]}",
-            fps=request.fps,
-            duration_seconds=request.duration,
-            timeout=1200,
-        )
+        if request.model == "comfyui-minimax":
+            # MiniMax H3 Ref2VA 工作流
+            ref_urls = [_to_full_url(u) for u in request.reference_images if u]
+            if not ref_urls:
+                raise HTTPException(status_code=400, detail="MiniMax 需要至少 1 张参考图片")
+            if len(ref_urls) > 9:
+                raise HTTPException(status_code=400, detail="MiniMax 最多支持 9 张参考图片")
+
+            width = request.width or 1344
+            height = request.height or 768
+            duration = request.duration if request.duration > 0 else 8
+
+            logger.info("[API] image-to-video MiniMax H3, images=%d, %dx%d, duration=%ss",
+                        len(ref_urls), width, height, duration)
+
+            result = await comfyui.generate_minimax_h3_video_and_wait(
+                prompt=request.prompt,
+                reference_image_urls=ref_urls,
+                width=width,
+                height=height,
+                duration_seconds=duration,
+                fps=request.fps,
+                save_prefix=f"video/MiniMax_H3_{uuid.uuid4().hex[:8]}",
+                timeout=1800,
+            )
+        else:
+            # LTX 工作流
+            if not request.first_frame_image:
+                raise HTTPException(status_code=400, detail="LTX 需要首帧图片")
+            first_frame_url = _to_full_url(request.first_frame_image)
+            logger.info("[API] image-to-video LTX first_frame=%s", first_frame_url)
+
+            result = await comfyui.generate_ltx_video_and_wait(
+                first_frame_image_url=first_frame_url,
+                video_prompt=request.prompt,
+                dialogue=request.dialogue,
+                voice_instruct=request.voice_instruct,
+                save_prefix=f"video/LTX_{uuid.uuid4().hex[:8]}",
+                fps=request.fps,
+                duration_seconds=request.duration,
+                timeout=1200,
+            )
 
         videos = result.get("videos", [])
         if not videos:

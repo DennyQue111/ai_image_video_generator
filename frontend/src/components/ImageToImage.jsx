@@ -8,6 +8,7 @@ const MODEL_OPTIONS = [
     group: 'ComfyUI 工作流',
     options: [
       { value: 'comfyui-qwen-image-edit', label: 'QwenImage Edit（单图编辑）' },
+      { value: 'comfyui-flux-kontext', label: 'Flux.1 Kontext Dev（图片编辑）' },
     ],
   },
   {
