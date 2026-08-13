@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 class GoogleAIClient:
-    def __init__(self, api_key: Optional[str] = None, timeout_seconds: int = 120):
+    def __init__(self, api_key: Optional[str] = None, timeout_seconds: int = 300):
         # 官方 SDK 自动从 GEMINI_API_KEY 环境变量加载，兼容 GOOGLE_AI_STUDIO_API_KEY
         key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_AI_STUDIO_API_KEY")
         if not key:
@@ -181,7 +181,7 @@ class GoogleAIClient:
                 ),
             )
         except Exception as e:
-            logger.error("[Gemini] Multi-image API request failed: %s", e)
+            logger.error("[Gemini] Multi-image API request failed: %s: %s", type(e).__name__, e)
             raise
 
         if not response.candidates:

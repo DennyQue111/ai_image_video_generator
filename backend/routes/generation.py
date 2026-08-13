@@ -121,8 +121,8 @@ def _resolve_image_data(url: str):
     """解析图片 URL，返回 (data, mime_type, ext)"""
     raw_url = url.split("?")[0]
     logger.info("[API] Resolving image data from %s", raw_url)
-    if raw_url.startswith("/static/projects/"):
-        relative = raw_url.replace("/static/projects/", "", 1)
+    if "/static/projects/" in raw_url:
+        relative = raw_url.split("/static/projects/", 1)[1]
         local_path = Path(PROJECT_FILE_PATH) / relative
         if not local_path.exists():
             logger.error("[API] Local image not found: %s", local_path)
