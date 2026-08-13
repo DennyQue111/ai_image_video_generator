@@ -3544,16 +3544,14 @@ class ComfyUIClient:
             api_workflow["348"]["inputs"]["noise_seed"] = seed
             logger.info("[ComfyUI] MiniMax H3 injected seed=%s into node 348", seed)
 
-        # Node 363: MiniMaxH3AudioConditioningT8 — 覆盖 width/height/length
+        # Node 363: MiniMaxH3AudioConditioningT8 — 覆盖 width/height
+        # 注意：不覆盖 length，让 ComfyMathExpression (node 351) 从 duration (node 350) 自动计算
+        # MiniMax H3 对帧数有约束（必须是 17 的倍数 + 偏移），直接设值会导致模型回退到默认 8 秒
         if "363" in api_workflow:
-            # 覆盖 width/height（断开 ResolutionSelector 的连接，直接设值）
             api_workflow["363"]["inputs"]["width"] = width
             api_workflow["363"]["inputs"]["height"] = height
-            # 覆盖 length（断开 ComfyMathExpression 的连接，直接设值）
-            total_frames = int(duration_seconds * fps)
-            api_workflow["363"]["inputs"]["length"] = total_frames
-            logger.info("[ComfyUI] MiniMax H3 injected %dx%d, length=%d into node 363",
-                        width, height, total_frames)
+            logger.info("[ComfyUI] MiniMax H3 injected %dx%d into node 363 (length left to node 351)",
+                        width, height)
 
         # Node 360: VHS_VideoCombine — 帧率和保存前缀
         if "360" in api_workflow:
