@@ -371,19 +371,25 @@ async def image_to_image(request: ImageToImageRequest):
             logger.error("[API] ComfyUI not running")
             raise HTTPException(status_code=503, detail="ComfyUI 未运行，请先启动 ComfyUI")
 
-        # 当前先支持单图编辑；多图 QwenImage 链式合成可后续扩展
+        # QwenImage 单图编辑仍用 first_image；Flux Kontext 支持多图
         first_image = request.images[0]
         full_source_url = _to_full_url(first_image.url)
-        logger.info("[API] image-to-image using ComfyUI, source_url=%s", full_source_url)
+        source_image_urls = [_to_full_url(img.url) for img in request.images if img.url]
+        logger.info("[API] image-to-image using ComfyUI, model=%s, num_images=%d", request.model, len(source_image_urls))
 
         try:
             if request.model == "comfyui-flux-kontext":
+                # 应用风格到 prompt
+                full_prompt = _apply_style(request.prompt, request.style)
                 result = await comfyui.generate_flux_kontext_i2i_and_wait(
-                    source_image_url=full_source_url,
-                    edit_prompt=request.prompt,
+                    source_image_urls=source_image_urls,
+                    edit_prompt=full_prompt,
+                    negative_prompt=request.negative_prompt,
                     steps=25,
-                    cfg=2.5,
+                    guidance=2.5,
                     seed=-1,
+                    width=request.width,
+                    height=request.height,
                     timeout=600,
                 )
             elif request.model.startswith("comfyui-qwen"):

@@ -565,20 +565,29 @@ class ComfyUIClient:
     def _build_flux_kontext_i2i_workflow(
         self,
         prompt: str,
+        negative_prompt: str = "",
         seed: int = -1,
         steps: int = 25,
-        cfg: float = 2.5,
+        cfg: float = 1.0,
+        guidance: float = 2.5,
+        num_images: int = 1,
+        width: int = 1024,
+        height: int = 1024,
     ) -> Dict[str, Any]:
-        """构建 Flux Kontext 图生图工作流"""
+        """构建 Flux Kontext 图生图工作流（支持多图参考）
+
+        标准结构（参考 ComfyUI 官方 Flux Kontext Dev 工作流）：
+        - CLIPTextEncode(prompt) → ReferenceLatent × N → FluxGuidance → KSampler.positive
+        - VAEEncode(LoadImage) → ReferenceLatent latent（参考图注入条件而非 latent_image）
+        - EmptySD3LatentImage → KSampler.latent_image
+        - KSampler(cfg=1.0, denoise=1.0)
+        """
         import random
         if seed == -1:
             seed = random.randint(0, 2**32 - 1)
 
         workflow = {
-            "10": {
-                "class_type": "LoadImage",
-                "inputs": {"image": ""},  # 运行时注入
-            },
+            # --- 模型加载 ---
             "12": {
                 "class_type": "UNETLoader",
                 "inputs": {"unet_name": "flux1-dev-kontext_fp8_scaled.safetensors", "weight_dtype": "default"},
@@ -591,37 +600,41 @@ class ComfyUIClient:
                     "type": "flux",
                 },
             },
+            "13": {
+                "class_type": "VAELoader",
+                "inputs": {"vae_name": "ae.safetensors"},
+            },
+            # --- 文本编码 ---
             "6": {
                 "class_type": "CLIPTextEncode",
                 "inputs": {"text": prompt, "clip": ["11", 0]},
             },
             "7": {
                 "class_type": "CLIPTextEncode",
-                "inputs": {"text": "", "clip": ["11", 0]},
+                "inputs": {"text": negative_prompt, "clip": ["11", 0]},
             },
-            "13": {
-                "class_type": "VAELoader",
-                "inputs": {"vae_name": "ae.safetensors"},
+            # --- 空白 latent（KSampler 的 latent_image，denoise=1.0 时参考图通过条件注入）---
+            "17": {
+                "class_type": "EmptySD3LatentImage",
+                "inputs": {"width": width, "height": height, "batch_size": 1},
             },
-            "14": {
-                "class_type": "VAEEncode",
-                "inputs": {"pixels": ["10", 0], "vae": ["13", 0]},
-            },
+            # --- 采样 ---
             "3": {
                 "class_type": "KSampler",
                 "inputs": {
                     "seed": seed,
                     "steps": steps,
-                    "cfg": cfg,
+                    "cfg": cfg,  # Flux 用 1.0，引导力由 FluxGuidance 控制
                     "sampler_name": "euler",
                     "scheduler": "simple",
                     "denoise": 1.0,
                     "model": ["12", 0],
-                    "positive": ["6", 0],
+                    "positive": ["16", 0],  # FluxGuidance 输出
                     "negative": ["7", 0],
-                    "latent_image": ["14", 0],
+                    "latent_image": ["17", 0],  # 空白 latent
                 },
             },
+            # --- 解码保存 ---
             "8": {
                 "class_type": "VAEDecode",
                 "inputs": {"samples": ["3", 0], "vae": ["13", 0]},
@@ -631,6 +644,38 @@ class ComfyUIClient:
                 "inputs": {"images": ["8", 0], "filename_prefix": "flux_kontext_i2i"},
             },
         }
+
+        # --- 动态添加参考图像节点（链式 ReferenceLatent）---
+        # 每张参考图：LoadImage(100+i) → VAEEncode(110+i) → ReferenceLatent(120+i)
+        current_conditioning = ["6", 0]  # 从 CLIPTextEncode 正面条件开始
+        for i in range(num_images):
+            load_id = str(100 + i)
+            vae_encode_id = str(110 + i)
+            ref_latent_id = str(120 + i)
+
+            workflow[load_id] = {
+                "class_type": "LoadImage",
+                "inputs": {"image": ""},  # 运行时注入
+            }
+            workflow[vae_encode_id] = {
+                "class_type": "VAEEncode",
+                "inputs": {"pixels": [load_id, 0], "vae": ["13", 0]},
+            }
+            workflow[ref_latent_id] = {
+                "class_type": "ReferenceLatent",
+                "inputs": {
+                    "conditioning": current_conditioning,
+                    "latent": [vae_encode_id, 0],
+                },
+            }
+            current_conditioning = [ref_latent_id, 0]
+
+        # --- FluxGuidance（接在最后一个 ReferenceLatent 之后）---
+        workflow["16"] = {
+            "class_type": "FluxGuidance",
+            "inputs": {"conditioning": current_conditioning, "guidance": guidance},
+        }
+
         return workflow
 
     async def _submit_and_wait(
@@ -675,21 +720,37 @@ class ComfyUIClient:
 
     async def generate_flux_kontext_i2i_and_wait(
         self,
-        source_image_url: str,
+        source_image_urls: list,
         edit_prompt: str,
+        negative_prompt: str = "",
         steps: int = 25,
-        cfg: float = 2.5,
+        cfg: float = 1.0,
+        guidance: float = 2.5,
         seed: int = -1,
+        width: int = 1024,
+        height: int = 1024,
         timeout: int = 300,
     ) -> Dict[str, Any]:
-        """使用 Flux Kontext 进行图片编辑"""
-        logger.info("[ComfyUI] generate_flux_kontext_i2i_and_wait, source=%s", source_image_url)
+        """使用 Flux Kontext 进行图片编辑（支持多图参考）"""
+        num_images = len(source_image_urls)
+        logger.info("[ComfyUI] generate_flux_kontext_i2i_and_wait, num_images=%d", num_images)
         workflow = self._build_flux_kontext_i2i_workflow(
-            prompt=edit_prompt, seed=seed, steps=steps, cfg=cfg
+            prompt=edit_prompt,
+            negative_prompt=negative_prompt,
+            seed=seed,
+            steps=steps,
+            cfg=cfg,
+            guidance=guidance,
+            num_images=num_images,
+            width=width,
+            height=height,
         )
-        # 上传源图片
-        upload_result = await self.upload_image(source_image_url)
-        workflow["10"]["inputs"]["image"] = upload_result["name"]
+        # 上传所有参考图片并注入对应 LoadImage 节点
+        for i, url in enumerate(source_image_urls):
+            upload_result = await self.upload_image(url)
+            load_id = str(100 + i)
+            workflow[load_id]["inputs"]["image"] = upload_result["name"]
+            logger.info("[ComfyUI] Uploaded reference image %d: %s", i, upload_result["name"])
         return await self._submit_and_wait(workflow, timeout, "Flux Kontext i2i")
 
     def get_image_url(self, filename: str, subfolder: str = "", type: str = "output") -> str:
