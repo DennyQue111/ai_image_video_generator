@@ -271,7 +271,7 @@ async def text_to_image(request: TextToImageRequest):
                     steps=4,
                     cfg=0,
                     seed=request.seed,
-                    checkpoint="flux1-schnell-fp8.safetensors",
+                    checkpoint="flux1-schnell-fp8-e4m3fn.safetensors",
                     timeout=600,
                 )
             elif request.model.startswith("comfyui-qwen"):

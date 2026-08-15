@@ -9,14 +9,14 @@
     "class_type": "CLIPTextEncode",
     "inputs": {
       "text": "",
-      "clip": ["10", 0]
+      "clip": ["10", 1]
     }
   },
   "7": {
     "class_type": "CLIPTextEncode",
     "inputs": {
       "text": "",
-      "clip": ["10", 0]
+      "clip": ["10", 1]
     }
   },
   "5": {

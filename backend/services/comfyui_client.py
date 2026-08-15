@@ -488,10 +488,20 @@ class ComfyUIClient:
         seed: int = -1,
         checkpoint: str = "flux1-dev-fp8.safetensors",
     ) -> Dict[str, Any]:
-        """构建 Flux 文生图工作流"""
+        """构建 Flux 文生图工作流
+
+        注意：如果 checkpoint 是 unet-only 版本（如 flux1-schnell-fp8-e4m3fn），
+        CheckpointLoaderSimple 的 CLIP 输出为 None，需要用 DualCLIPLoader 单独加载。
+        """
         import random
         if seed == -1:
             seed = random.randint(0, 2**32 - 1)
+
+        # 检测是否需要 DualCLIPLoader 和 VAELoader（unet-only 模型没有 CLIP 和 VAE）
+        needs_dual_clip = "e4m3fn" in checkpoint or "schnell" in checkpoint.lower()
+
+        clip_source = "11" if needs_dual_clip else "10"
+        vae_source = "12" if needs_dual_clip else "10"
 
         workflow = {
             "10": {
@@ -500,11 +510,11 @@ class ComfyUIClient:
             },
             "6": {
                 "class_type": "CLIPTextEncode",
-                "inputs": {"text": prompt, "clip": ["10", 0]},
+                "inputs": {"text": prompt, "clip": [clip_source, 1] if not needs_dual_clip else [clip_source, 0]},
             },
             "7": {
                 "class_type": "CLIPTextEncode",
-                "inputs": {"text": "", "clip": ["10", 0]},
+                "inputs": {"text": "", "clip": [clip_source, 1] if not needs_dual_clip else [clip_source, 0]},
             },
             "5": {
                 "class_type": "EmptySD3LatentImage",
@@ -527,13 +537,29 @@ class ComfyUIClient:
             },
             "8": {
                 "class_type": "VAEDecode",
-                "inputs": {"samples": ["3", 0], "vae": ["10", 2]},
+                "inputs": {"samples": ["3", 0], "vae": [vae_source, 2] if not needs_dual_clip else [vae_source, 0]},
             },
             "9": {
                 "class_type": "SaveImage",
                 "inputs": {"images": ["8", 0], "filename_prefix": "flux_t2i"},
             },
         }
+
+        # 为 unet-only 模型添加 DualCLIPLoader 和 VAELoader
+        if needs_dual_clip:
+            workflow["11"] = {
+                "class_type": "DualCLIPLoader",
+                "inputs": {
+                    "clip_name1": "clip_l.safetensors",
+                    "clip_name2": "t5xxl_fp8_e4m3fn.safetensors",
+                    "type": "flux",
+                },
+            }
+            workflow["12"] = {
+                "class_type": "VAELoader",
+                "inputs": {"vae_name": "ae.safetensors"},
+            }
+
         return workflow
 
     def _build_flux_kontext_i2i_workflow(
@@ -554,8 +580,8 @@ class ComfyUIClient:
                 "inputs": {"image": ""},  # 运行时注入
             },
             "12": {
-                "class_type": "LoadDiffusionModel",
-                "inputs": {"model_name": "flux1-dev-kontext_fp8_scaled.safetensors"},
+                "class_type": "UNETLoader",
+                "inputs": {"unet_name": "flux1-dev-kontext_fp8_scaled.safetensors", "weight_dtype": "default"},
             },
             "11": {
                 "class_type": "DualCLIPLoader",
