@@ -1,11 +1,16 @@
 """
-本地多模态 LLM 服务（Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive）
+本地多模态 LLM 服务
 
 基于 Ollama HTTP API，提供图片理解 + 提示词生成能力。
 供场景图 HDR、故事板生成等子功能复用。
 
-Ollama 自动管理模型加载和 MoE offload（GPU/CPU 分配）。
-12GB 显存实测生成速度约 46 tok/s。
+单模型策略（12GB 显存优化）：
+- qwen3-vl:8b：8B 多模态模型，同时处理图片理解和文本生成
+  - MathVista 85.8，OCR/图表/截图/数学都强
+  - 6.1GB 显存占用，12GB 显存充裕
+
+注：qwen36-35b（22GB MoE）在 12GB 显存上无法稳定运行
+（CUDA shared object initialization failed），已删除。
 """
 
 import logging
@@ -19,15 +24,17 @@ logger = logging.getLogger(__name__)
 
 # Ollama API 端点
 OLLAMA_HOST = "http://localhost:11434"
-OLLAMA_MODEL = "qwen36-35b"
+# 统一使用 qwen3-vl:8b（视觉 + 文本）
+OLLAMA_VISION_MODEL = "qwen3-vl:8b"
+OLLAMA_TEXT_MODEL = "qwen3-vl:8b"
 
 
 class LLMVisionService:
     """
-    本地多模态 LLM 服务（单例）
+    本地多模态 LLM 服务（单例，双模型）
 
-    使用 Ollama 运行的 Qwen3.6-35B-A3B 模型。
-    Ollama 自动处理模型加载、MoE offload、GPU/CPU 分配。
+    视觉模型 qwen3-vl:8b：处理带图片的请求（图片理解 + 描述）
+    文本模型 qwen36-35b：处理纯文本请求（提示词生成、文本优化）
     """
 
     _instance = None
@@ -41,20 +48,29 @@ class LLMVisionService:
         if hasattr(self, "_initialized"):
             return
         self.host = OLLAMA_HOST
-        self.model = OLLAMA_MODEL
+        self.vision_model = OLLAMA_VISION_MODEL
+        self.text_model = OLLAMA_TEXT_MODEL
         self._initialized = True
-        logger.info("[LLM] LLMVisionService initialized, host=%s, model=%s", self.host, self.model)
+        logger.info(
+            "[LLM] LLMVisionService initialized, host=%s, vision=%s, text=%s",
+            self.host, self.vision_model, self.text_model,
+        )
 
-    def _check_ollama_running(self) -> bool:
-        """检查 Ollama 服务是否运行"""
+    def _check_ollama_running(self, model_name: str = None) -> bool:
+        """检查 Ollama 服务是否运行且指定模型可用
+
+        Args:
+            model_name: 检查的模型名（默认检查视觉模型）
+        """
+        target = model_name or self.vision_model
         try:
             resp = requests.get(f"{self.host}/api/tags", timeout=5)
             if resp.status_code == 200:
                 models = resp.json().get("models", [])
                 for m in models:
-                    if m.get("name", "").startswith(self.model):
+                    if m.get("name", "").startswith(target):
                         return True
-                logger.error("[LLM] Ollama 运行中，但模型 %s 未找到", self.model)
+                logger.error("[LLM] Ollama 运行中，但模型 %s 未找到", target)
                 return False
             logger.error("[LLM] Ollama API 返回 %d", resp.status_code)
             return False
@@ -74,11 +90,18 @@ class LLMVisionService:
         return base64.b64encode(data).decode("utf-8")
 
     def _call_llm_sync(self, system_prompt: str, user_text: str, image_path: Optional[str] = None) -> str:
-        """同步调用 Ollama API（支持图片输入）"""
-        if not self._check_ollama_running():
+        """同步调用 Ollama API（支持图片输入）
+
+        自动选择模型：
+        - 有图片 → 视觉模型 qwen3-vl:8b（多模态）
+        - 无图片 → 文本模型 qwen36-35b（35B MoE，文本质量更好）
+        """
+        # 根据是否有图片选择模型
+        use_model = self.vision_model if image_path else self.text_model
+        if not self._check_ollama_running(use_model):
             raise RuntimeError(
-                f"Ollama 服务不可用或模型 {self.model} 未加载。"
-                f"请确保 Ollama 正在运行且已创建模型。"
+                f"Ollama 服务不可用或模型 {use_model} 未加载。"
+                f"请确保 Ollama 正在运行且已下载模型（ollama pull {use_model}）。"
             )
 
         # 构建消息
@@ -92,11 +115,11 @@ class LLMVisionService:
             messages.append({"role": "system", "content": system_prompt})
         messages.append(user_content)
 
-        logger.info("[LLM] 调用 Ollama API, has_image=%s, text_len=%d",
-                    bool(image_path), len(user_text))
+        logger.info("[LLM] 调用 Ollama API, model=%s, has_image=%s, text_len=%d",
+                    use_model, bool(image_path), len(user_text))
 
         payload = {
-            "model": self.model,
+            "model": use_model,
             "messages": messages,
             "stream": False,
             "think": False,  # 关闭 thinking process，直接输出结果
@@ -119,10 +142,10 @@ class LLMVisionService:
         eval_duration = data.get("eval_duration", 0)
         if eval_duration > 0:
             rate = eval_count / (eval_duration / 1e9)
-            logger.info("[LLM] Ollama 返回, response_len=%d, %d tokens, %.1f tok/s",
-                        len(text), eval_count, rate)
+            logger.info("[LLM] Ollama 返回, model=%s, response_len=%d, %d tokens, %.1f tok/s",
+                        use_model, len(text), eval_count, rate)
         else:
-            logger.info("[LLM] Ollama 返回, response_len=%d", len(text))
+            logger.info("[LLM] Ollama 返回, model=%s, response_len=%d", use_model, len(text))
         return text.strip()
 
     async def _call_llm(self, system_prompt: str, user_text: str, image_path: Optional[str] = None) -> str:
@@ -199,5 +222,8 @@ class LLMVisionService:
         return await self._call_llm(system_prompt, instruction, image_path)
 
     def is_available(self) -> bool:
-        """检查 LLM 服务是否可用（Ollama 运行且模型存在）"""
-        return self._check_ollama_running()
+        """检查 LLM 服务是否可用（Ollama 运行且视觉模型存在）
+
+        场景图 HDR 等功能必须用视觉模型，因此只检查视觉模型。
+        """
+        return self._check_ollama_running(self.vision_model)

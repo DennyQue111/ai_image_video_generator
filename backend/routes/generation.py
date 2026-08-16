@@ -703,9 +703,9 @@ async def gemini_image_to_prompt(request: ImageToPromptRequest):
 async def scene_hdr(request: SceneHDRRequest):
     """
     场景图 HDR 生成：
-    1. 用本地 Qwen3.5-27B 多模态 LLM 分析场景图
+    1. 用本地 qwen3-vl:8b 多模态 LLM 分析场景图
     2. LLM 生成"去人物 + 2×2 网格 4 角度"的提示词
-    3. 用 QwenImage Edit 工作流生成 2×2 网格图
+    3. 根据所选模型（QwenImage Edit / Flux.2 Klein 9B）生成 2×2 网格图
     """
     logger.info("[API] /api/scene-hdr called")
 
@@ -726,7 +726,7 @@ async def scene_hdr(request: SceneHDRRequest):
     if not llm_service.is_available():
         raise HTTPException(
             status_code=503,
-            detail="LLM 模型未就绪。请确认已下载 Qwen3.5-27B-heretic 模型到 ComfyUI/models/llm/ 目录"
+            detail="LLM 视觉模型未就绪。请确认 Ollama 已运行并下载模型：ollama pull qwen3-vl:8b"
         )
 
     try:
