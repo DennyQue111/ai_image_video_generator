@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from constants import PROJECT_FILE_PATH
 from services.comfyui_client import get_comfyui_client
 from services.google_ai_client import GoogleAIClient
+from services.llm_vision_service import LLMVisionService
 from services.style_config import StyleConfig
 
 logger = logging.getLogger(__name__)
@@ -78,6 +79,13 @@ class InpaintRequest(BaseModel):
 class ImageToPromptRequest(BaseModel):
     image: str = Field(..., description="图片 URL 或 data URL")
     model: str = "gemini-2.5-flash"
+
+
+class SceneHDRRequest(BaseModel):
+    image: str = Field(..., description="场景图 URL")
+    negative_prompt: str = "people, person, human, character"
+    custom_instruction: str = ""
+    model: str = "qwen-image-edit"  # qwen-image-edit | flux2-klein
 
 
 # ============ 辅助函数 ============
@@ -687,3 +695,103 @@ async def gemini_image_to_prompt(request: ImageToPromptRequest):
     except Exception as e:
         logger.error("[API] gemini-image-to-prompt failed: %s", e)
         raise HTTPException(status_code=500, detail=f"图片分析失败: {str(e)}")
+
+
+# ============ 场景图 HDR 生成 (Scene HDR) ============
+
+@router.post("/api/scene-hdr")
+async def scene_hdr(request: SceneHDRRequest):
+    """
+    场景图 HDR 生成：
+    1. 用本地 Qwen3.5-27B 多模态 LLM 分析场景图
+    2. LLM 生成"去人物 + 2×2 网格 4 角度"的提示词
+    3. 用 QwenImage Edit 工作流生成 2×2 网格图
+    """
+    logger.info("[API] /api/scene-hdr called")
+
+    # 1. 解析场景图本地路径
+    raw_url = request.image.split("?")[0]
+    if "/static/projects/" not in raw_url:
+        raise HTTPException(status_code=400, detail="请上传场景图（仅支持本地上传的图片）")
+
+    relative = raw_url.split("/static/projects/", 1)[1]
+    scene_image_path = Path(PROJECT_FILE_PATH) / relative
+    if not scene_image_path.exists():
+        raise HTTPException(status_code=404, detail=f"场景图文件不存在: {scene_image_path}")
+
+    logger.info("[API] scene-hdr: 场景图路径=%s", scene_image_path)
+
+    # 2. 用 LLM 分析场景图并生成提示词
+    llm_service = LLMVisionService()
+    if not llm_service.is_available():
+        raise HTTPException(
+            status_code=503,
+            detail="LLM 模型未就绪。请确认已下载 Qwen3.5-27B-heretic 模型到 ComfyUI/models/llm/ 目录"
+        )
+
+    try:
+        logger.info("[API] scene-hdr: 正在用 LLM 分析场景图...")
+        hdr_prompt = await llm_service.analyze_scene_for_hdr(
+            image_path=str(scene_image_path),
+            custom_instruction=request.custom_instruction,
+        )
+        logger.info("[API] scene-hdr: LLM 生成提示词: %s...", hdr_prompt[:200])
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except ImportError as e:
+        raise HTTPException(status_code=500, detail=f"依赖缺失: {e}")
+    except Exception as e:
+        logger.error("[API] scene-hdr: LLM 分析失败: %s", e)
+        raise HTTPException(status_code=500, detail=f"场景图分析失败: {str(e)}")
+
+    # 3. 根据所选模型生成 2×2 网格图
+    comfyui = get_comfyui_client()
+    if not await comfyui.check_connection():
+        raise HTTPException(status_code=503, detail="ComfyUI 未运行，请先启动 ComfyUI")
+
+    task_folder = OUTPUT_DIR / "scene_hdr"
+    source_image_url = _to_full_url(request.image)
+
+    try:
+        if request.model == "flux2-klein":
+            logger.info("[API] scene-hdr: 调用 Flux.2 Klein 9B 图生图生成...")
+            result = await comfyui.generate_flux2_scene_hdr_and_wait(
+                source_image_url=source_image_url,
+                edit_prompt=hdr_prompt,
+                negative_prompt=request.negative_prompt,
+                timeout=600,
+            )
+            result_model = "flux2-klein-9b"
+        else:
+            logger.info("[API] scene-hdr: 调用 QwenImage Edit 生成 2×2 网格图...")
+            result = await comfyui.generate_character_variant_and_wait(
+                source_image_url=source_image_url,
+                variant_prompt=hdr_prompt,
+                negative_prompt=request.negative_prompt,
+                timeout=600,
+            )
+            result_model = "qwen-image-edit-hdr"
+
+        images = result.get("images", [])
+        if not images:
+            raise HTTPException(status_code=500, detail="ComfyUI 未返回任何图片")
+
+        img = images[0]
+        comfyui_url = comfyui.get_image_url(
+            img["filename"], img.get("subfolder", ""), img.get("type", "output")
+        )
+        saved = _save_comfyui_image(comfyui_url, task_folder, "scene_hdr")
+        logger.info("[API] scene-hdr: 生成成功, saved=%s", saved["local_path"])
+
+        return {
+            "success": True,
+            "model": result_model,
+            "images": [saved],
+            "llm_prompt": hdr_prompt,
+        }
+    except TimeoutError as e:
+        logger.error("[API] scene-hdr: 生成超时: %s", e)
+        raise HTTPException(status_code=504, detail=str(e))
+    except Exception as e:
+        logger.error("[API] scene-hdr: 生成失败: %s", e)
+        raise HTTPException(status_code=500, detail=f"场景图 HDR 生成失败: {str(e)}")

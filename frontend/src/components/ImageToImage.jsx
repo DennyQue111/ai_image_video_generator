@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Loader2, Sparkles, Image as ImageIcon, X, Upload } from 'lucide-react'
+import { Loader2, Sparkles, Image as ImageIcon, X, Upload, Grid3x3, Copy, Check } from 'lucide-react'
 import axios from 'axios'
 import '../styles/GeneratorCommon.css'
 
@@ -24,6 +24,7 @@ const MODEL_OPTIONS = [
 ]
 
 export default function ImageToImage() {
+  const [subTab, setSubTab] = useState('normal') // 'normal' | 'scene-hdr'
   const [prompt, setPrompt] = useState('')
   const [negativePrompt, setNegativePrompt] = useState('')
   const [model, setModel] = useState('comfyui-qwen-image-edit')
@@ -36,6 +37,15 @@ export default function ImageToImage() {
   const [aspectRatio, setAspectRatio] = useState('1:1')
   const fileInputRef = useRef(null)
 
+  // 场景图 HDR 状态
+  const [hdrImage, setHdrImage] = useState(null) // { file, previewUrl, serverUrl, uploading }
+  const [hdrInstruction, setHdrInstruction] = useState('')
+  const [hdrNegative, setHdrNegative] = useState('people, person, human, character')
+  const [hdrResult, setHdrResult] = useState(null)
+  const [promptCopied, setPromptCopied] = useState(false)
+  const [hdrModel, setHdrModel] = useState('qwen-image-edit')
+  const hdrFileInputRef = useRef(null)
+
   useEffect(() => {
     axios.get('/api/styles').then((res) => {
       if (res.data.success) {
@@ -44,6 +54,7 @@ export default function ImageToImage() {
     })
   }, [])
 
+  // ============ 常规编辑：多图上传 ============
   const handleFileChange = async (e) => {
     const files = Array.from(e.target.files)
     if (!files.length) return
@@ -127,6 +138,77 @@ export default function ImageToImage() {
     }
   }
 
+  // ============ 场景图 HDR：单图上传 ============
+  const handleHdrFileChange = async (e) => {
+    const file = e.target.files[0]
+    if (!file) return
+
+    setUploadingHdr(true)
+    setError('')
+
+    const previewUrl = URL.createObjectURL(file)
+    setHdrImage({ file, previewUrl, serverUrl: '', uploading: true })
+
+    const formData = new FormData()
+    formData.append('file', file)
+    try {
+      const res = await axios.post('/api/upload-image', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      setHdrImage({ file, previewUrl, serverUrl: res.data.url, uploading: false })
+    } catch (err) {
+      setHdrImage(null)
+      setError(err.response?.data?.detail || '场景图上传失败')
+    } finally {
+      setUploadingHdr(false)
+    }
+  }
+
+  const removeHdrImage = () => {
+    setHdrImage(null)
+  }
+
+  const copyPromptToClipboard = async (text) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setPromptCopied(true)
+      setTimeout(() => setPromptCopied(false), 2000)
+    } catch (err) {
+      setError('复制失败，请手动选择文本复制')
+    }
+  }
+
+  const [uploadingHdr, setUploadingHdr] = useState(false)
+
+  const handleHdrSubmit = async () => {
+    if (!hdrImage || !hdrImage.serverUrl) {
+      setError('请上传场景图并等待上传完成')
+      return
+    }
+
+    setLoading(true)
+    setError('')
+    setHdrResult(null)
+
+    try {
+      const response = await axios.post('/api/scene-hdr', {
+        image: hdrImage.serverUrl,
+        negative_prompt: hdrNegative,
+        custom_instruction: hdrInstruction,
+        model: hdrModel,
+      })
+      if (response.data.success) {
+        setHdrResult(response.data)
+      } else {
+        setError(response.data.error || '生成失败')
+      }
+    } catch (err) {
+      setError(err.response?.data?.detail || err.message || '请求失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const isGemini = model.startsWith('gemini') || model.startsWith('imagen')
 
   return (
@@ -137,189 +219,367 @@ export default function ImageToImage() {
           图生图
         </h2>
 
+        {/* 子页签切换 */}
+        <div className="sub-tabs">
+          <button
+            className={`sub-tab ${subTab === 'normal' ? 'active' : ''}`}
+            onClick={() => { setSubTab('normal'); setError(''); }}
+          >
+            <ImageIcon size={16} />
+            常规编辑
+          </button>
+          <button
+            className={`sub-tab ${subTab === 'scene-hdr' ? 'active' : ''}`}
+            onClick={() => { setSubTab('scene-hdr'); setError(''); }}
+          >
+            <Grid3x3 size={16} />
+            场景图 HDR
+          </button>
+        </div>
+
         {error && <div className="error-message">{error}</div>}
 
-        <div className="form-row">
-          <div className="form-group full">
-            <label className="form-label">模型</label>
-            <select className="form-select" value={model} onChange={(e) => setModel(e.target.value)}>
-              {MODEL_OPTIONS.map((group) => (
-                <optgroup key={group.group} label={group.group}>
-                  {group.options.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </option>
+        {/* ============ 常规编辑子页签 ============ */}
+        {subTab === 'normal' && (
+          <>
+            <div className="form-row">
+              <div className="form-group full">
+                <label className="form-label">模型</label>
+                <select className="form-select" value={model} onChange={(e) => setModel(e.target.value)}>
+                  {MODEL_OPTIONS.map((group) => (
+                    <optgroup key={group.group} label={group.group}>
+                      {group.options.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </optgroup>
                   ))}
-                </optgroup>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        {isGemini && (
-          <div className="form-row">
-            <div className="form-group full">
-              <label className="form-label">比例</label>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                {['1:1', '16:9', '9:16', '4:3', '3:4'].map((r) => (
-                  <button
-                    key={r}
-                    type="button"
-                    className={`form-select ${aspectRatio === r ? 'active' : ''}`}
-                    style={{
-                      flex: 1,
-                      padding: '8px 12px',
-                      border: aspectRatio === r ? '1px solid var(--accent)' : '1px solid var(--border)',
-                      borderRadius: 'var(--radius)',
-                      background: aspectRatio === r ? 'var(--accent)' : 'var(--bg-primary)',
-                      color: aspectRatio === r ? 'white' : 'var(--text-primary)',
-                      cursor: 'pointer',
-                      fontSize: '14px',
-                    }}
-                    onClick={() => setAspectRatio(r)}
-                  >
-                    {r}
-                  </button>
-                ))}
+                </select>
               </div>
             </div>
-          </div>
-        )}
 
-        <div className="form-row">
-          <div className="form-group full">
-            <label className="form-label">风格</label>
-            <select className="form-select" value={style} onChange={(e) => setStyle(e.target.value)}>
-              <option value="">无风格</option>
-              {styles.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        <div className="form-row">
-          <div className="form-group full">
-            <label className="form-label">编辑要求 / 总体描述</label>
-            <textarea
-              className="form-textarea"
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              placeholder="描述你想如何修改或合成图片..."
-              rows={4}
-            />
-          </div>
-        </div>
-
-        <div className="form-row">
-          <div className="form-group full">
-            <label className="form-label">Negative Prompt</label>
-            <textarea
-              className="form-textarea"
-              value={negativePrompt}
-              onChange={(e) => setNegativePrompt(e.target.value)}
-              placeholder="不想出现的内容..."
-              rows={2}
-            />
-          </div>
-        </div>
-
-        <div className="form-row">
-          <div className="form-group full">
-            <label className="form-label">参考图片</label>
-            <div
-              className="image-upload-zone"
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <Upload size={28} />
-              <div>点击上传图片</div>
-              <div style={{ fontSize: '12px', marginTop: '4px' }}>
-                支持 PNG、JPG、WEBP
-              </div>
-            </div>
-            <input
-              ref={fileInputRef}
-              type="file"
-              className="image-upload-input"
-              accept="image/*"
-              multiple
-              onChange={handleFileChange}
-            />
-
-            <div className="image-preview-list">
-              {images.map((img) => (
-                <div key={img.url} className="image-preview-item">
-                  <img src={img.url} alt="preview" />
-                  {img.uploading && (
-                    <div
-                      style={{
-                        position: 'absolute',
-                        inset: 0,
-                        background: 'rgba(0,0,0,0.6)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                      }}
-                    >
-                      <Loader2 className="animate-spin" color="white" />
-                    </div>
-                  )}
-                  <button
-                    className="image-preview-remove"
-                    onClick={() => removeImage(img.url)}
-                    disabled={img.uploading}
-                  >
-                    <X size={14} />
-                  </button>
+            {isGemini && (
+              <div className="form-row">
+                <div className="form-group full">
+                  <label className="form-label">比例</label>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    {['1:1', '16:9', '9:16', '4:3', '3:4'].map((r) => (
+                      <button
+                        key={r}
+                        type="button"
+                        className={`form-select ${aspectRatio === r ? 'active' : ''}`}
+                        style={{
+                          flex: 1,
+                          padding: '8px 12px',
+                          border: aspectRatio === r ? '1px solid var(--accent)' : '1px solid var(--border)',
+                          borderRadius: 'var(--radius)',
+                          background: aspectRatio === r ? 'var(--accent)' : 'var(--bg-primary)',
+                          color: aspectRatio === r ? 'white' : 'var(--text-primary)',
+                          cursor: 'pointer',
+                          fontSize: '14px',
+                        }}
+                        onClick={() => setAspectRatio(r)}
+                      >
+                        {r}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              ))}
-            </div>
-
-            {images.length > 0 && (
-              <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {images.map((img, idx) => (
-                  <input
-                    key={img.url}
-                    type="text"
-                    className="form-input"
-                    placeholder={`图片 ${idx + 1} 描述（可选）`}
-                    value={img.description}
-                    onChange={(e) => updateDescription(img.url, e.target.value)}
-                    disabled={img.uploading}
-                  />
-                ))}
               </div>
             )}
-          </div>
-        </div>
 
-        <button className="generate-btn" onClick={handleSubmit} disabled={loading || images.some((i) => i.uploading)}>
-          {loading ? <Loader2 className="animate-spin" size={18} /> : <Sparkles size={18} />}
-          {loading ? '生成中...' : '生成图片'}
-        </button>
+            <div className="form-row">
+              <div className="form-group full">
+                <label className="form-label">风格</label>
+                <select className="form-select" value={style} onChange={(e) => setStyle(e.target.value)}>
+                  <option value="">无风格</option>
+                  {styles.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="form-row">
+              <div className="form-group full">
+                <label className="form-label">编辑要求 / 总体描述</label>
+                <textarea
+                  className="form-textarea"
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  placeholder="描述你想如何修改或合成图片..."
+                  rows={4}
+                />
+              </div>
+            </div>
+
+            <div className="form-row">
+              <div className="form-group full">
+                <label className="form-label">Negative Prompt</label>
+                <textarea
+                  className="form-textarea"
+                  value={negativePrompt}
+                  onChange={(e) => setNegativePrompt(e.target.value)}
+                  placeholder="不想出现的内容..."
+                  rows={2}
+                />
+              </div>
+            </div>
+
+            <div className="form-row">
+              <div className="form-group full">
+                <label className="form-label">参考图片</label>
+                <div
+                  className="image-upload-zone"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <Upload size={28} />
+                  <div>点击上传图片</div>
+                  <div style={{ fontSize: '12px', marginTop: '4px' }}>
+                    支持 PNG、JPG、WEBP
+                  </div>
+                </div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  className="image-upload-input"
+                  accept="image/*"
+                  multiple
+                  onChange={handleFileChange}
+                />
+
+                <div className="image-preview-list">
+                  {images.map((img) => (
+                    <div key={img.url} className="image-preview-item">
+                      <img src={img.url} alt="preview" />
+                      {img.uploading && (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            inset: 0,
+                            background: 'rgba(0,0,0,0.6)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          <Loader2 className="animate-spin" color="white" />
+                        </div>
+                      )}
+                      <button
+                        className="image-preview-remove"
+                        onClick={() => removeImage(img.url)}
+                        disabled={img.uploading}
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                {images.length > 0 && (
+                  <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {images.map((img, idx) => (
+                      <input
+                        key={img.url}
+                        type="text"
+                        className="form-input"
+                        placeholder={`图片 ${idx + 1} 描述（可选）`}
+                        value={img.description}
+                        onChange={(e) => updateDescription(img.url, e.target.value)}
+                        disabled={img.uploading}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <button className="generate-btn" onClick={handleSubmit} disabled={loading || images.some((i) => i.uploading)}>
+              {loading ? <Loader2 className="animate-spin" size={18} /> : <Sparkles size={18} />}
+              {loading ? '生成中...' : '生成图片'}
+            </button>
+          </>
+        )}
+
+        {/* ============ 场景图 HDR 子页签 ============ */}
+        {subTab === 'scene-hdr' && (
+          <>
+            <div className="form-row">
+              <div className="form-group full">
+                <label className="form-label">生成模型</label>
+                <select
+                  className="form-select"
+                  value={hdrModel}
+                  onChange={(e) => setHdrModel(e.target.value)}
+                >
+                  <option value="qwen-image-edit">Qwen Image Edit 2511（图生图编辑）</option>
+                  <option value="flux2-klein">Flux.2 Klein 9B（图生图编辑）</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="form-row">
+              <div className="form-group full">
+                <label className="form-label">场景图（Midjourney 概念图）</label>
+                {hdrImage ? (
+                  <div className="image-preview-item" style={{ width: '100%', maxWidth: '300px' }}>
+                    <img src={hdrImage.previewUrl} alt="scene" style={{ width: '100%', height: 'auto' }} />
+                    {hdrImage.uploading && (
+                      <div
+                        style={{
+                          position: 'absolute',
+                          inset: 0,
+                          background: 'rgba(0,0,0,0.6)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                      >
+                        <Loader2 className="animate-spin" color="white" />
+                      </div>
+                    )}
+                    <button
+                      className="image-preview-remove"
+                      onClick={removeHdrImage}
+                      disabled={hdrImage.uploading}
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                ) : (
+                  <div
+                    className="image-upload-zone"
+                    onClick={() => hdrFileInputRef.current?.click()}
+                  >
+                    <Upload size={28} />
+                    <div>上传场景概念图</div>
+                    <div style={{ fontSize: '12px', marginTop: '4px' }}>
+                      Midjourney 生成的场景图
+                    </div>
+                  </div>
+                )}
+                <input
+                  ref={hdrFileInputRef}
+                  type="file"
+                  className="image-upload-input"
+                  accept="image/*"
+                  onChange={handleHdrFileChange}
+                />
+              </div>
+            </div>
+
+            <div className="form-row">
+              <div className="form-group full">
+                <label className="form-label">额外指令（可选）</label>
+                <textarea
+                  className="form-textarea"
+                  value={hdrInstruction}
+                  onChange={(e) => setHdrInstruction(e.target.value)}
+                  placeholder="例如：保持暖色调，突出建筑细节..."
+                  rows={2}
+                />
+              </div>
+            </div>
+
+            <div className="form-row">
+              <div className="form-group full">
+                <label className="form-label">Negative Prompt</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  value={hdrNegative}
+                  onChange={(e) => setHdrNegative(e.target.value)}
+                  placeholder="不想出现的内容"
+                />
+              </div>
+            </div>
+
+            <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px', padding: '12px', background: 'var(--bg-secondary)', borderRadius: 'var(--radius)' }}>
+              <strong>功能说明：</strong>
+              AI 会分析场景图，去掉人物，生成 2×2 网格的 4 角度视图
+              （正面 / 右转 90° / 背面 / 左转 90°），保持色调和风格一致。
+            </div>
+
+            <button
+              className="generate-btn"
+              onClick={handleHdrSubmit}
+              disabled={loading || (hdrImage && hdrImage.uploading)}
+            >
+              {loading ? <Loader2 className="animate-spin" size={18} /> : <Grid3x3 size={18} />}
+              {loading ? '生成中（LLM 分析 + 图像生成）...' : '生成场景 HDR'}
+            </button>
+          </>
+        )}
       </div>
 
+      {/* ============ 结果展示 ============ */}
       <div className="result-card">
         <h3 className="result-title">生成结果</h3>
-        {!result ? (
-          <div className="result-empty">暂无结果，点击上方按钮生成</div>
-        ) : (
-          <>
-            <div className="result-media">
-              <img
-                src={result.images[0].url}
-                alt={result.images[0].filename}
-                className="result-image"
-              />
-            </div>
-            <div className="result-info">
-              <div>模型: {result.model}</div>
-              <div>文件名: {result.images[0].filename}</div>
-              <div>URL: {result.images[0].url}</div>
-            </div>
-          </>
+
+        {subTab === 'normal' && (
+          !result ? (
+            <div className="result-empty">暂无结果，点击上方按钮生成</div>
+          ) : (
+            <>
+              <div className="result-media">
+                <img
+                  src={result.images[0].url}
+                  alt={result.images[0].filename}
+                  className="result-image"
+                />
+              </div>
+              <div className="result-info">
+                <div>模型: {result.model}</div>
+                <div>文件名: {result.images[0].filename}</div>
+                <div>URL: {result.images[0].url}</div>
+              </div>
+            </>
+          )
+        )}
+
+        {subTab === 'scene-hdr' && (
+          !hdrResult ? (
+            <div className="result-empty">暂无结果，上传场景图并点击生成</div>
+          ) : (
+            <>
+              {hdrResult.llm_prompt && (
+                <div className="prompt-display-card">
+                  <div className="prompt-display-header">
+                    <span className="prompt-display-title">
+                      <Sparkles size={14} />
+                      LLM 转化的提示词
+                    </span>
+                    <button
+                      type="button"
+                      className="prompt-display-copy-btn"
+                      onClick={() => copyPromptToClipboard(hdrResult.llm_prompt)}
+                    >
+                      {promptCopied ? <Check size={13} /> : <Copy size={13} />}
+                      {promptCopied ? '已复制' : '复制'}
+                    </button>
+                  </div>
+                  <div className="prompt-display-body">
+                    {hdrResult.llm_prompt}
+                  </div>
+                </div>
+              )}
+              <div className="result-media">
+                <img
+                  src={hdrResult.images[0].url}
+                  alt={hdrResult.images[0].filename}
+                  className="result-image"
+                />
+              </div>
+              <div className="result-info">
+                <div>模型: {hdrResult.model}</div>
+                <div>文件名: {hdrResult.images[0].filename}</div>
+              </div>
+            </>
+          )
         )}
       </div>
     </div>

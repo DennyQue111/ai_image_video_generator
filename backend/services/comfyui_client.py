@@ -753,6 +753,166 @@ class ComfyUIClient:
             logger.info("[ComfyUI] Uploaded reference image %d: %s", i, upload_result["name"])
         return await self._submit_and_wait(workflow, timeout, "Flux Kontext i2i")
 
+    def _build_flux2_i2i_workflow(
+        self,
+        prompt: str,
+        negative_prompt: str = "",
+        seed: int = -1,
+        steps: int = 8,
+        cfg: float = 4.0,
+        width: int = 1024,
+        height: int = 1024,
+    ) -> Dict[str, Any]:
+        """构建 Flux.2 Klein 9B 图生图工作流（基于源图编辑）
+
+        Flux.2 Klein 9B 是统一架构模型，文生图 + 图生图编辑均支持。
+        与 Flux.1 的关键区别：
+        - 文本编码器用 Qwen3-8B（CLIPLoader type="flux2"），非 clip_l + t5xxl
+        - VAE 用 flux2-vae.safetensors，非 ae.safetensors
+        - 采样用官方高级节点：SamplerCustomAdvanced + Flux2Scheduler + CFGGuider
+
+        模型配置：
+        - UNETLoader: flux-2-klein-9b-fp8.safetensors（9B 蒸馏版）
+        - CLIPLoader: qwen_3_8b_fp8mixed.safetensors, type="flux2"
+        - VAELoader: flux2-vae.safetensors
+
+        参数（蒸馏版推荐）：
+        - steps: 4-8（不要过多）
+        - cfg: 3.5-7.0
+        """
+        import random
+        if seed == -1:
+            seed = random.randint(0, 2**32 - 1)
+
+        workflow = {
+            # --- 模型加载 ---
+            # UNETLoader: Flux.2 Klein 9B 蒸馏版
+            "12": {
+                "class_type": "UNETLoader",
+                "inputs": {
+                    "unet_name": "flux-2-klein-9b-fp8.safetensors",
+                    "weight_dtype": "default",
+                },
+            },
+            # CLIPLoader: Qwen3-8B 文本编码器（Flux.2 专用，非 DualCLIPLoader）
+            "11": {
+                "class_type": "CLIPLoader",
+                "inputs": {
+                    "clip_name": "qwen_3_8b_fp8mixed.safetensors",
+                    "type": "flux2",
+                },
+            },
+            # VAELoader: Flux.2 专用 VAE
+            "13": {
+                "class_type": "VAELoader",
+                "inputs": {"vae_name": "flux2-vae.safetensors"},
+            },
+            # --- 文本编码 ---
+            "6": {
+                "class_type": "CLIPTextEncode",
+                "inputs": {"text": prompt, "clip": ["11", 0]},
+            },
+            "7": {
+                "class_type": "CLIPTextEncode",
+                "inputs": {"text": negative_prompt, "clip": ["11", 0]},
+            },
+            # --- 源图加载与编码（img2img）---
+            # LoadImage 节点的 image 字段在提交前由上传结果注入
+            "load_src": {
+                "class_type": "LoadImage",
+                "inputs": {"image": ""},
+            },
+            "vae_enc": {
+                "class_type": "VAEEncode",
+                "inputs": {"pixels": ["load_src", 0], "vae": ["13", 0]},
+            },
+            # --- 高级采样（官方推荐：Flux2Scheduler + CFGGuider + SamplerCustomAdvanced）---
+            "noise": {
+                "class_type": "RandomNoise",
+                "inputs": {"noise_seed": seed},
+            },
+            "sampler_sel": {
+                "class_type": "KSamplerSelect",
+                "inputs": {"sampler_name": "euler"},
+            },
+            "scheduler": {
+                "class_type": "Flux2Scheduler",
+                "inputs": {"steps": steps, "width": width, "height": height},
+            },
+            "guider": {
+                "class_type": "CFGGuider",
+                "inputs": {
+                    "model": ["12", 0],
+                    "positive": ["6", 0],
+                    "negative": ["7", 0],
+                    "cfg": cfg,
+                },
+            },
+            "3": {
+                "class_type": "SamplerCustomAdvanced",
+                "inputs": {
+                    "noise": ["noise", 0],
+                    "guider": ["guider", 0],
+                    "sampler": ["sampler_sel", 0],
+                    "sigmas": ["scheduler", 0],
+                    "latent_image": ["vae_enc", 0],
+                },
+            },
+            # --- 解码保存 ---
+            "8": {
+                "class_type": "VAEDecode",
+                "inputs": {"samples": ["3", 0], "vae": ["13", 0]},
+            },
+            "9": {
+                "class_type": "SaveImage",
+                "inputs": {"images": ["8", 0], "filename_prefix": "flux2_scene_hdr"},
+            },
+        }
+        return workflow
+
+    async def generate_flux2_scene_hdr_and_wait(
+        self,
+        source_image_url: str,
+        edit_prompt: str,
+        negative_prompt: str = "",
+        steps: int = 8,
+        cfg: float = 4.0,
+        seed: int = -1,
+        width: int = 1024,
+        height: int = 1024,
+        timeout: int = 600,
+    ) -> Dict[str, Any]:
+        """使用 Flux.2 Klein 9B 图生图生成场景 HDR（基于场景图编辑）
+
+        Args:
+            source_image_url: 场景图的 URL 或本地路径
+            edit_prompt: LLM 生成的编辑提示词（去人物 + 2×2 网格 4 角度）
+            negative_prompt: 反向 prompt
+            steps: 采样步数（蒸馏版推荐 4-8，不要过多）
+            cfg: CFG 强度（推荐 4.0，贴近指令可调 6-7）
+        """
+        logger.info("[ComfyUI] generate_flux2_scene_hdr_and_wait, source=%s", source_image_url)
+        workflow = self._build_flux2_i2i_workflow(
+            prompt=edit_prompt,
+            negative_prompt=negative_prompt,
+            seed=seed,
+            steps=steps,
+            cfg=cfg,
+            width=width,
+            height=height,
+        )
+
+        # 上传场景图并注入 LoadImage 节点
+        upload_result = await self.upload_image(source_image_url)
+        uploaded_filename = upload_result.get("name", "")
+        if not uploaded_filename:
+            raise Exception("Failed to upload scene image to ComfyUI")
+        workflow["load_src"]["inputs"]["image"] = uploaded_filename
+        logger.info("[ComfyUI] Scene image uploaded: %s", uploaded_filename)
+
+        logger.info("[ComfyUI] Flux.2 scene HDR prompt: %s", edit_prompt[:200])
+        return await self._submit_and_wait(workflow, timeout, "Flux.2 Klein scene HDR")
+
     def get_image_url(self, filename: str, subfolder: str = "", type: str = "output") -> str:
         """获取生成图片的 URL"""
         return f"{self.base_url}/view?filename={filename}&subfolder={subfolder}&type={type}"

@@ -14,3 +14,8 @@ dist/
 *.log
 
 outputs/
+
+# IDE
+.trae/
+.vscode/
+.idea/

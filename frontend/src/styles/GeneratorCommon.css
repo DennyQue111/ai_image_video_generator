@@ -20,6 +20,38 @@
   gap: 8px;
 }
 
+.sub-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 12px;
+}
+
+.sub-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s;
+}
+
+.sub-tab:hover {
+  border-color: var(--accent);
+}
+
+.sub-tab.active {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
 .form-row {
   display: flex;
   gap: 16px;
@@ -232,4 +264,61 @@
 
 .status-dot.disconnected {
   background: var(--danger);
+}
+
+/* ============ LLM 提示词展示窗口 ============ */
+.prompt-display-card {
+  margin-bottom: 16px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.prompt-display-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--accent);
+  color: white;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.prompt-display-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.prompt-display-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  color: white;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.2s;
+}
+
+.prompt-display-copy-btn:hover {
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.prompt-display-body {
+  padding: 12px 14px;
+  background: var(--bg-primary);
+  font-size: 13px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-primary);
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  max-height: 320px;
+  overflow-y: auto;
 }
