@@ -11,6 +11,11 @@
 
 注：qwen36-35b（22GB MoE）在 12GB 显存上无法稳定运行
 （CUDA shared object initialization failed），已删除。
+
+Skill 文件动态加载：
+- skill 文件放在 backend/skills/*.md
+- LLM 调用前实时读取，修改 skill 不用重启后端
+- 不同子功能用不同 skill 文件
 """
 
 import logging
@@ -27,6 +32,9 @@ OLLAMA_HOST = "http://localhost:11434"
 # 统一使用 qwen3-vl:8b（视觉 + 文本）
 OLLAMA_VISION_MODEL = "qwen3-vl:8b"
 OLLAMA_TEXT_MODEL = "qwen3-vl:8b"
+
+# Skill 文件目录
+SKILLS_DIR = Path(__file__).parent.parent / "skills"
 
 
 class LLMVisionService:
@@ -55,6 +63,23 @@ class LLMVisionService:
             "[LLM] LLMVisionService initialized, host=%s, vision=%s, text=%s",
             self.host, self.vision_model, self.text_model,
         )
+
+    def _load_skill(self, skill_name: str) -> str:
+        """读取 skill 文件内容
+
+        Args:
+            skill_name: skill 名称（不含 .md 后缀）
+
+        Returns:
+            skill 文件内容。文件不存在时返回空字符串并记录警告。
+        """
+        skill_path = SKILLS_DIR / f"{skill_name}.md"
+        if not skill_path.exists():
+            logger.warning("[LLM] Skill 文件不存在: %s", skill_path)
+            return ""
+        content = skill_path.read_text(encoding="utf-8")
+        logger.info("[LLM] 已加载 skill: %s (%d 字符)", skill_name, len(content))
+        return content
 
     def _check_ollama_running(self, model_name: str = None) -> bool:
         """检查 Ollama 服务是否运行且指定模型可用
@@ -158,35 +183,32 @@ class LLMVisionService:
         """
         分析场景图，生成 HDR 2×2 网格提示词
 
+        从 backend/skills/scene_hdr.md 加载 skill 作为系统提示词。
+        修改 skill 文件后立即生效，无需重启后端。
+
         Args:
             image_path: 场景图本地路径
             custom_instruction: 用户可选的额外指令
 
         Returns:
-            用于 QwenImage Edit 的英文提示词
+            用于 Flux.2 / QwenImage Edit 的英文提示词
         """
-        system_prompt = (
-            "你是一个专业的场景图分析专家。你的任务是分析用户上传的场景图，"
-            "并生成一个用于 AI 图像编辑的英文提示词。\n\n"
-            "【任务要求】\n"
-            "1. 分析场景图的内容：建筑风格、色调、光线、材质、氛围\n"
-            "2. 去掉场景中的所有人物（negative prompt 已设置）\n"
-            "3. 生成 2×2 网格布局的场景图，4 个角度分别是：\n"
-            "   - 左上：站在场景中心正面视角\n"
-            "   - 右上：右转 90 度视角\n"
-            "   - 左下：背面视角（180 度）\n"
-            "   - 右下：左转 90 度视角\n"
-            "4. 4 个角度保持完全一致的色调、光线和风格\n\n"
-            "【输出格式】\n"
-            "只输出英文提示词，用于 QwenImage Edit。\n"
-            "提示词应描述 2×2 网格布局，4 个格子分别是不同角度的场景。\n"
-            '开头加上 "A 2x2 grid layout of the same scene from 4 angles:"\n'
-            "不要输出任何中文或额外解释。"
-        )
+        # 动态加载 skill 文件
+        system_prompt = self._load_skill("scene_hdr")
+        if not system_prompt:
+            # skill 文件不存在时的 fallback
+            system_prompt = (
+                "你是一个专业的场景图分析专家。分析用户上传的场景图，"
+                "生成一个用于 AI 图像编辑的英文提示词。"
+                "提示词应描述 2×2 网格布局，4 个格子分别是不同角度的场景。"
+                '开头加上 "A 2x2 grid layout of the same scene from 4 angles:"'
+                "只输出英文提示词。"
+            )
+            logger.warning("[LLM] skill 文件加载失败，使用 fallback prompt")
 
-        user_text = "请分析这张场景图并生成 HDR 提示词。"
+        user_text = "请分析这张场景参考图，按照 skill 规则生成 HDR 4 面板场景概念图提示词。"
         if custom_instruction:
-            user_text += f"\n\n用户额外要求：{custom_instruction}"
+            user_text += f"\n\n用户附加要求（请融入对应模块）：{custom_instruction}"
 
         result = await self._call_llm(system_prompt, user_text, image_path)
         logger.info("[LLM] 场景图 HDR 提示词生成完成: %s...", result[:200])
