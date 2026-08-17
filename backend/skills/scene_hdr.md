@@ -47,7 +47,7 @@
 | **镜头语言** | 焦距感（广角/标准/长焦）/ 角度 / 景深 / 构图法则 |
 | **氛围特效** | 雾密度 / 体积光 / 镜头光晕 / 泛光 / 暗角 / 颗粒 |
 
-**风格关键词串**：分析完成后，提炼为一句紧凑的英文关键词串，用于【风格锚定】模块。
+**风格关键词串**：分析完成后，提炼为一句紧凑的英文关键词串。⚠️ **此串不写入最终提示词**——参考图通过 LoadImage 注入时已锁定风格 DNA，再写风格描述反而污染画面。风格分析仅用于帮助你理解参考图，以便在描述场景内容时与参考图保持一致的语境。
 
 ### Step 3: 场景定位
 
@@ -87,6 +87,8 @@
 
 **输出语言**：英文（Flux/QwenImage Edit 对英文理解最精准）
 
+⚠️ **不要写【Style Anchor / 风格锚定】模块**——参考图通过 LoadImage 节点注入时已经锁定了风格 DNA（色调/笔触/氛围/光影逻辑），在提示词中重复声明风格反而污染画面，会导致模型偏离原图风格。
+
 ```
 A 2x2 grid layout of the same scene from 4 angles:
 
@@ -111,9 +113,6 @@ Bottom-right: Left (270°), left side environment.
 
 [Left 270°]
 [Left side environment, mirror of right but with different details]
-
-[Style Anchor]
-[Style keyword string from Step 2 — color palette, line quality, shadow type, atmosphere effects]
 
 [Environmental Atmosphere]
 [Overall mood] + [Atmospheric perspective] + [Particulates: fog/haze/rain/dust] + [Volumetric light scattering]
@@ -162,9 +161,6 @@ View from alley dead-end toward entrance. Shows building backs — different win
 [Left 270°]
 Left building side — mirrors right but different details. Abandoned metal doorframe half-open, wall graffiti and pipes. Side alley entrance visible in distance. Wet ground, scattered debris.
 
-[Style Anchor]
-Cyberpunk aesthetic, deep cyan-blue base with magenta neon accents, warm amber highlights, soft gradient shadows, atmospheric perspective, volumetric light scattering, film grain, cinematic 28mm wide-angle.
-
 [Environmental Atmosphere]
 Claustrophobic oppressive isolation. Atmospheric perspective softens background. Moist haze permeates. Neon volumetric light scattering, soft glow halos. Dark areas near-black but retain detail.
 
@@ -178,14 +174,15 @@ Light cold wind along alley direction. Overhead cables sway slightly. Puddles sh
 
 1. **英文优先**：Flux/QwenImage Edit 对英文长句描述理解最精准
 2. **Layout 先于内容**：开篇先声明 2×2 网格结构，再逐面板撰写内容
-3. **环境动态不可忽视**：【Environmental Dynamics】是场景概念图的核心价值——让场景从模型道具变成活着的空间
-4. **主视觉锚定一切**：Front 0° 面板的光照、时间、氛围必须贯穿所有面板，保证一致性
-5. **场景概念图不含人物**：不描述任何人物。用建筑元素（门、车、路灯）作为比例参照
-6. **色板是生产工具**：颜色描述要带材质语境——"deep cyan-blue"不够，"deep cyan-blue wet stone ground at night"才够
-7. **字数超限时的取舍优先级**：
+3. **不要写风格锚定**：参考图通过 LoadImage 节点注入时已锁定风格 DNA（色调/笔触/氛围/光影逻辑），在提示词中重复声明风格反而污染画面，导致模型偏离原图风格。Step 2 的风格分析仅用于理解参考图，**不写入最终提示词**
+4. **环境动态不可忽视**：【Environmental Dynamics】是场景概念图的核心价值——让场景从模型道具变成活着的空间
+5. **主视觉锚定一切**：Front 0° 面板的光照、时间、氛围必须贯穿所有面板，保证一致性
+6. **场景概念图不含人物**：不描述任何人物。用建筑元素（门、车、路灯）作为比例参照
+7. **色板是生产工具**：颜色描述要带材质语境——"deep cyan-blue"不够，"deep cyan-blue wet stone ground at night"才够
+8. **字数超限时的取舍优先级**：
    - 第一删：重复的材质描述
    - 第二删：Back 180° 和 Left 270° 的细节，每面板保留 1 句
-   - 绝对保留：[Layout] [Front 0°] [Style Anchor]
+   - 绝对保留：[Layout] [Front 0°] [Environmental Dynamics]
 
 ## 输出要求
 
