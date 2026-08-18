@@ -762,6 +762,7 @@ class ComfyUIClient:
         cfg: float = 4.0,
         width: int = 1024,
         height: int = 1024,
+        denoise: float = 0.6,
     ) -> Dict[str, Any]:
         """构建 Flux.2 Klein 9B 图生图工作流（基于源图编辑）
 
@@ -769,16 +770,23 @@ class ComfyUIClient:
         与 Flux.1 的关键区别：
         - 文本编码器用 Qwen3-8B（CLIPLoader type="flux2"），非 clip_l + t5xxl
         - VAE 用 flux2-vae.safetensors，非 ae.safetensors
-        - 采样用官方高级节点：SamplerCustomAdvanced + Flux2Scheduler + CFGGuider
 
         模型配置：
         - UNETLoader: flux-2-klein-9b-fp8.safetensors（9B 蒸馏版）
         - CLIPLoader: qwen_3_8b_fp8mixed.safetensors, type="flux2"
         - VAELoader: flux2-vae.safetensors
 
+        采样策略：
+        - 用标准 KSampler + denoise 参数
+        - denoise 控制：保留 (1-denoise) 源图 + 添加 denoise 比例噪声
+        - denoise=1.0 等于文生图（完全忽略源图）
+        - denoise=0.6 推荐值：保留 40% 源图风格 + 60% 生成空间
+        - denoise=0.3 会过于保守，无法生成 4 角度变化
+
         参数（蒸馏版推荐）：
         - steps: 4-8（不要过多）
         - cfg: 3.5-7.0
+        - denoise: 0.5-0.7（场景图 HDR 推荐 0.6）
         """
         import random
         if seed == -1:
@@ -826,36 +834,23 @@ class ComfyUIClient:
                 "class_type": "VAEEncode",
                 "inputs": {"pixels": ["load_src", 0], "vae": ["13", 0]},
             },
-            # --- 高级采样（官方推荐：Flux2Scheduler + CFGGuider + SamplerCustomAdvanced）---
-            "noise": {
-                "class_type": "RandomNoise",
-                "inputs": {"noise_seed": seed},
-            },
-            "sampler_sel": {
-                "class_type": "KSamplerSelect",
-                "inputs": {"sampler_name": "euler"},
-            },
-            "scheduler": {
-                "class_type": "Flux2Scheduler",
-                "inputs": {"steps": steps, "width": width, "height": height},
-            },
-            "guider": {
-                "class_type": "CFGGuider",
+            # --- 标准 KSampler 采样（带 denoise 参数）---
+            # 关键：denoise 参数控制源图保留比例
+            # 之前用 SamplerCustomAdvanced + RandomNoise 会导致满噪声覆盖源图 latent
+            # 改用 KSampler 后，denoise=0.6 表示保留 40% 源图 + 60% 噪声
+            "3": {
+                "class_type": "KSampler",
                 "inputs": {
                     "model": ["12", 0],
                     "positive": ["6", 0],
                     "negative": ["7", 0],
-                    "cfg": cfg,
-                },
-            },
-            "3": {
-                "class_type": "SamplerCustomAdvanced",
-                "inputs": {
-                    "noise": ["noise", 0],
-                    "guider": ["guider", 0],
-                    "sampler": ["sampler_sel", 0],
-                    "sigmas": ["scheduler", 0],
                     "latent_image": ["vae_enc", 0],
+                    "seed": seed,
+                    "steps": steps,
+                    "cfg": cfg,
+                    "sampler_name": "euler",
+                    "scheduler": "simple",
+                    "denoise": denoise,
                 },
             },
             # --- 解码保存 ---
@@ -880,6 +875,7 @@ class ComfyUIClient:
         seed: int = -1,
         width: int = 1024,
         height: int = 1024,
+        denoise: float = 0.6,
         timeout: int = 600,
     ) -> Dict[str, Any]:
         """使用 Flux.2 Klein 9B 图生图生成场景 HDR（基于场景图编辑）
@@ -890,8 +886,11 @@ class ComfyUIClient:
             negative_prompt: 反向 prompt
             steps: 采样步数（蒸馏版推荐 4-8，不要过多）
             cfg: CFG 强度（推荐 4.0，贴近指令可调 6-7）
+            denoise: 源图保留比例（0.6 = 保留 40% 源图 + 60% 噪声）
+                     场景图 HDR 推荐 0.5-0.7
+                     太低无法生成 4 角度变化，太高源图影响弱
         """
-        logger.info("[ComfyUI] generate_flux2_scene_hdr_and_wait, source=%s", source_image_url)
+        logger.info("[ComfyUI] generate_flux2_scene_hdr_and_wait, source=%s, denoise=%s", source_image_url, denoise)
         workflow = self._build_flux2_i2i_workflow(
             prompt=edit_prompt,
             negative_prompt=negative_prompt,
@@ -900,6 +899,7 @@ class ComfyUIClient:
             cfg=cfg,
             width=width,
             height=height,
+            denoise=denoise,
         )
 
         # 上传场景图并注入 LoadImage 节点
