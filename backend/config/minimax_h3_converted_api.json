@@ -86,7 +86,7 @@
         0
       ],
       "lora_name": "minimax_h3_turbo_4STEPS_comfyui.safetensors",
-      "strength_model": 1
+      "strength_model": 0
     }
   },
   "355": {
@@ -96,7 +96,7 @@
         "358",
         0
       ],
-      "reserved": 1,
+      "reserved": 0,
       "mode": "manual",
       "seed": 941525106803875,
       "auto_max_reserved": 0,
@@ -121,7 +121,7 @@
     }
   },
   "357": {
-    "class_type": "MiniMaxH3MultiRateSamplerEXPT8",
+    "class_type": "MiniMaxH3DualClockSamplerT8",
     "inputs": {
       "model": [
         "354",
@@ -131,8 +131,7 @@
         "363",
         1
       ],
-      "video_steps": 8,
-      "audio_steps": 10,
+      "steps": 8,
       "shift_video": 12,
       "shift_audio": 3
     }

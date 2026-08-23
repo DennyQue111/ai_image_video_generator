@@ -3716,7 +3716,7 @@ class ComfyUIClient:
         fps: int = 24,
         seed: int = -1,
         save_prefix: str = "video/MiniMax_H3",
-        timeout: int = 1800,
+        timeout: int = 7200,  # 2小时（12GB 显存动态加载 + 推理需要 60+ 分钟）
     ) -> Dict[str, Any]:
         """
         使用 MiniMax H3 Ref2VA 工作流生成视频（多图参考生视频）
@@ -3748,7 +3748,7 @@ class ComfyUIClient:
 
         # 2. 加载工作流 JSON 并筛选 Ref2VA 流程
         config_dir = Path(__file__).parent.parent / "config"
-        workflow_path = config_dir / "minimax_h3_full_workflow.json"
+        workflow_path = config_dir / "minimax_h3_pruned_workflow.json"
         if not workflow_path.exists():
             raise Exception(f"MiniMax H3 workflow not found: {workflow_path}")
 

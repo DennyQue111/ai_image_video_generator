@@ -531,7 +531,7 @@ async def image_to_video(request: ImageToVideoRequest):
                 duration_seconds=duration,
                 fps=request.fps,
                 save_prefix=f"video/MiniMax_H3_{uuid.uuid4().hex[:8]}",
-                timeout=1800,
+                timeout=7200,
             )
         else:
             # LTX 工作流
