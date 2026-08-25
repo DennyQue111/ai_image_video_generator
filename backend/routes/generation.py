@@ -260,26 +260,14 @@ async def text_to_image(request: TextToImageRequest):
             raise HTTPException(status_code=503, detail="ComfyUI 未运行，请先启动 ComfyUI")
 
         try:
-            if request.model == "comfyui-flux-dev":
+            if request.model == "comfyui-flux2":
                 result = await comfyui.generate_flux_t2i_and_wait(
                     prompt=full_prompt,
                     width=request.width,
                     height=request.height,
                     steps=request.steps or 20,
-                    cfg=request.cfg if request.cfg is not None else 1.0,
+                    guidance=request.cfg if request.cfg is not None else 3.5,
                     seed=request.seed,
-                    checkpoint="flux1-dev-fp8.safetensors",
-                    timeout=600,
-                )
-            elif request.model == "comfyui-flux-schnell":
-                result = await comfyui.generate_flux_t2i_and_wait(
-                    prompt=full_prompt,
-                    width=request.width,
-                    height=request.height,
-                    steps=4,
-                    cfg=0,
-                    seed=request.seed,
-                    checkpoint="flux1-schnell-fp8-e4m3fn.safetensors",
                     timeout=600,
                 )
             elif request.model.startswith("comfyui-qwen"):

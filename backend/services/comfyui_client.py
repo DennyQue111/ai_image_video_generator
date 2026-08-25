@@ -484,81 +484,85 @@ class ComfyUIClient:
         width: int = 1024,
         height: int = 1024,
         steps: int = 20,
-        cfg: float = 1.0,
+        guidance: float = 3.5,
         seed: int = -1,
-        checkpoint: str = "flux1-dev-fp8.safetensors",
     ) -> Dict[str, Any]:
-        """构建 Flux 文生图工作流
+        """构建 Flux.2 Klein 9B 文生图工作流
 
-        注意：如果 checkpoint 是 unet-only 版本（如 flux1-schnell-fp8-e4m3fn），
-        CheckpointLoaderSimple 的 CLIP 输出为 None，需要用 DualCLIPLoader 单独加载。
+        使用 UNETLoader + CLIPLoader(type=flux2, Qwen3-8B) + Flux2Scheduler +
+        SamplerCustomAdvanced 等节点构建 Flux2 工作流。
+        Flux2 不需要负面提示词（BasicGuider 只接受单个 conditioning）。
         """
         import random
         if seed == -1:
             seed = random.randint(0, 2**32 - 1)
 
-        # 检测是否需要 DualCLIPLoader 和 VAELoader（unet-only 模型没有 CLIP 和 VAE）
-        needs_dual_clip = "e4m3fn" in checkpoint or "schnell" in checkpoint.lower()
-
-        clip_source = "11" if needs_dual_clip else "10"
-        vae_source = "12" if needs_dual_clip else "10"
-
         workflow = {
             "10": {
-                "class_type": "CheckpointLoaderSimple",
-                "inputs": {"ckpt_name": checkpoint},
+                "class_type": "UNETLoader",
+                "inputs": {
+                    "unet_name": "flux-2-klein-9b-fp8.safetensors",
+                    "weight_dtype": "default",
+                },
+            },
+            "11": {
+                "class_type": "CLIPLoader",
+                "inputs": {
+                    "clip_name": "qwen_3_8b_fp8mixed.safetensors",
+                    "type": "flux2",
+                },
             },
             "6": {
                 "class_type": "CLIPTextEncode",
-                "inputs": {"text": prompt, "clip": [clip_source, 1] if not needs_dual_clip else [clip_source, 0]},
+                "inputs": {"text": prompt, "clip": ["11", 0]},
             },
-            "7": {
-                "class_type": "CLIPTextEncode",
-                "inputs": {"text": "", "clip": [clip_source, 1] if not needs_dual_clip else [clip_source, 0]},
+            "17": {
+                "class_type": "FluxGuidance",
+                "inputs": {"conditioning": ["6", 0], "guidance": guidance},
             },
             "5": {
-                "class_type": "EmptySD3LatentImage",
+                "class_type": "EmptyFlux2LatentImage",
                 "inputs": {"width": width, "height": height, "batch_size": 1},
             },
+            "12": {
+                "class_type": "Flux2Scheduler",
+                "inputs": {"steps": steps, "width": width, "height": height},
+            },
+            "13": {
+                "class_type": "BasicGuider",
+                "inputs": {"model": ["10", 0], "conditioning": ["17", 0]},
+            },
+            "14": {
+                "class_type": "RandomNoise",
+                "inputs": {"noise_seed": seed},
+            },
+            "15": {
+                "class_type": "KSamplerSelect",
+                "inputs": {"sampler_name": "euler"},
+            },
             "3": {
-                "class_type": "KSampler",
+                "class_type": "SamplerCustomAdvanced",
                 "inputs": {
-                    "seed": seed,
-                    "steps": steps,
-                    "cfg": cfg,
-                    "sampler_name": "euler",
-                    "scheduler": "simple",
-                    "denoise": 1.0,
-                    "model": ["10", 0],
-                    "positive": ["6", 0],
-                    "negative": ["7", 0],
+                    "noise": ["14", 0],
+                    "guider": ["13", 0],
+                    "sampler": ["15", 0],
+                    "sigmas": ["12", 0],
                     "latent_image": ["5", 0],
                 },
             },
+            "16": {
+                "class_type": "VAELoader",
+                "inputs": {"vae_name": "flux2-vae.safetensors"},
+            },
             "8": {
                 "class_type": "VAEDecode",
-                "inputs": {"samples": ["3", 0], "vae": [vae_source, 2] if not needs_dual_clip else [vae_source, 0]},
+                "inputs": {"samples": ["3", 0], "vae": ["16", 0]},
             },
             "9": {
                 "class_type": "SaveImage",
-                "inputs": {"images": ["8", 0], "filename_prefix": "flux_t2i"},
+                "inputs": {"images": ["8", 0], "filename_prefix": "flux2_t2i"},
             },
         }
-
-        # 为 unet-only 模型添加 DualCLIPLoader 和 VAELoader
-        if needs_dual_clip:
-            workflow["11"] = {
-                "class_type": "DualCLIPLoader",
-                "inputs": {
-                    "clip_name1": "clip_l.safetensors",
-                    "clip_name2": "t5xxl_fp8_e4m3fn.safetensors",
-                    "type": "flux",
-                },
-            }
-            workflow["12"] = {
-                "class_type": "VAELoader",
-                "inputs": {"vae_name": "ae.safetensors"},
-            }
 
         return workflow
 
@@ -705,18 +709,17 @@ class ComfyUIClient:
         width: int = 1024,
         height: int = 1024,
         steps: int = 20,
-        cfg: float = 1.0,
+        guidance: float = 3.5,
         seed: int = -1,
-        checkpoint: str = "flux1-dev-fp8.safetensors",
         timeout: int = 300,
     ) -> Dict[str, Any]:
-        """使用 Flux 模型生成图片"""
-        logger.info("[ComfyUI] generate_flux_t2i_and_wait, checkpoint=%s, %dx%d, steps=%d",
-                    checkpoint, width, height, steps)
+        """使用 Flux.2 Klein 9B 模型生成图片"""
+        logger.info("[ComfyUI] generate_flux_t2i_and_wait, %dx%d, steps=%d, guidance=%.1f",
+                    width, height, steps, guidance)
         workflow = self._build_flux_t2i_workflow(
-            prompt=prompt, width=width, height=height, steps=steps, cfg=cfg, seed=seed, checkpoint=checkpoint
+            prompt=prompt, width=width, height=height, steps=steps, guidance=guidance, seed=seed
         )
-        return await self._submit_and_wait(workflow, timeout, "Flux t2i")
+        return await self._submit_and_wait(workflow, timeout, "Flux2 t2i")
 
     async def generate_flux_kontext_i2i_and_wait(
         self,

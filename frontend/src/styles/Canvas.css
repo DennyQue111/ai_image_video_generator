@@ -1,0 +1,210 @@
+/* 自由画布样式 */
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+/* 画布容器 */
+.canvas-container {
+  flex: 1;
+  position: relative;
+  background: #0d0d1a;
+  overflow: hidden;
+}
+
+/* 画布提示文字（空画布时显示） */
+.canvas-hint {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: #555;
+  font-size: 16px;
+  text-align: center;
+  pointer-events: none;
+  user-select: none;
+  z-index: 5;
+}
+
+/* 右侧面板 */
+.right-panel {
+  width: 300px;
+  min-width: 300px;
+  height: 100vh;
+  background: #1a1a2e;
+  border-left: 1px solid #2a2a4a;
+  padding: 16px;
+  box-sizing: border-box;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.right-panel-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.right-panel-tab {
+  flex: 1;
+  padding: 8px;
+  background: #0d0d1a;
+  color: #888;
+  border: 1px solid #2a2a4a;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  text-align: center;
+}
+
+.right-panel-tab.active {
+  background: #3b82f6;
+  color: #fff;
+  border-color: #3b82f6;
+}
+
+/* 通用按钮 */
+.canvas-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  color: #fff;
+}
+
+.canvas-btn-primary { background: #3b82f6; }
+.canvas-btn-success { background: #10b981; }
+.canvas-btn-danger { background: #ef4444; }
+.canvas-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* 输入框 */
+.canvas-input,
+.canvas-textarea {
+  width: 100%;
+  background: #0d0d1a;
+  border: 1px solid #2a2a4a;
+  border-radius: 8px;
+  color: #e0e0e0;
+  padding: 10px;
+  font-size: 13px;
+  font-family: inherit;
+  box-sizing: border-box;
+  outline: none;
+}
+
+.canvas-textarea { resize: vertical; }
+
+/* 下拉框选项深色主题 */
+.canvas-input option {
+  background: #0d0d1a;
+  color: #e0e0e0;
+}
+
+/* 标签 */
+.panel-label {
+  color: #888;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* 滚动条 */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: #0d0d1a; }
+::-webkit-scrollbar-thumb { background: #2a2a4a; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #3a3a5a; }
+
+/* ============ React Flow 节点样式 ============ */
+
+/* 节点容器 */
+.rf-image-node {
+  border: 2px solid #2a2a4a;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #1a1a2e;
+  display: inline-block;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.rf-image-node.rf-node-selected {
+  border-color: #3b82f6;
+  box-shadow: 0 0 20px rgba(59, 130, 246, 0.4);
+}
+
+.rf-node-media {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.rf-node-media img,
+.rf-node-media video {
+  display: block;
+  border-radius: 6px;
+}
+
+/* React Flow 控件深色主题 */
+.react-flow__controls {
+  background: #1a1a2e;
+  border: 1px solid #2a2a4a;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.react-flow__controls-button {
+  background: #1a1a2e;
+  border-bottom: 1px solid #2a2a4a;
+  color: #888;
+  fill: #888;
+}
+
+.react-flow__controls-button:hover {
+  background: #2a2a4a;
+}
+
+.react-flow__controls-button svg {
+  fill: #aaa;
+  stroke: #aaa;
+}
+
+/* React Flow 连线标签 */
+.react-flow__edge-path {
+  stroke: #3b82f6;
+  stroke-width: 2;
+}
+
+.react-flow__edge.animated .react-flow__edge-path {
+  stroke-dasharray: 5;
+  animation: dashdraw 0.5s linear infinite;
+}
+
+@keyframes dashdraw {
+  to { stroke-dashoffset: -10; }
+}
+
+/* 端口（Handle）悬浮效果 */
+.react-flow__handle {
+  transition: transform 0.15s;
+}
+
+.react-flow__handle:hover {
+  transform: scale(1.3);
+}
+
+/* React Flow 画布背景 */
+.react-flow__background {
+  background: #0d0d1a;
+}

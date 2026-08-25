@@ -8,8 +8,7 @@ const MODEL_OPTIONS = [
     group: 'ComfyUI 工作流',
     options: [
       { value: 'comfyui-qwen-image', label: 'QwenImage 文生图' },
-      { value: 'comfyui-flux-dev', label: 'Flux.1 Dev FP8（高质量，非商用）' },
-      { value: 'comfyui-flux-schnell', label: 'Flux.1 Schnell FP8（快速，可商用）' },
+      { value: 'comfyui-flux2', label: 'Flux.2 Klein 9B FP8' },
     ],
   },
   {
@@ -50,12 +49,9 @@ export default function TextToImage() {
 
   // 切换模型时，设置合适的 ComfyUI 参数默认值
   useEffect(() => {
-    if (model === 'comfyui-flux-dev') {
+    if (model === 'comfyui-flux2') {
       setSteps(20)
-      setCfg(1.0)
-    } else if (model === 'comfyui-flux-schnell') {
-      setSteps(4)
-      setCfg(0)
+      setCfg(3.5)
     } else if (model === 'comfyui-qwen-image') {
       setSteps(8)
       setCfg(1.0)
