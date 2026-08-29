@@ -36,10 +36,10 @@ export function useCanvasElements() {
         },
       }
       setNodes((prev) => [...prev, newNode])
-      setSelectedId(id)
+      setSelectedIds([id])
       return id
     },
-    [setNodes]
+    [setNodes, setSelectedIds]
   )
 
   // 删除节点和相关连线
