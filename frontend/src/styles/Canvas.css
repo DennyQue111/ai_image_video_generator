@@ -107,7 +107,9 @@
 .canvas-textarea { resize: vertical; }
 
 /* 下拉框选项深色主题 */
-.canvas-input option {
+.canvas-input option,
+select option,
+select optgroup {
   background: #0d0d1a;
   color: #e0e0e0;
 }

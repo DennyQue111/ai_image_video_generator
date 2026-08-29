@@ -2,14 +2,29 @@ import { useState, useRef } from 'react'
 import { Upload, Sparkles, Trash2, Loader2 } from 'lucide-react'
 import axios from 'axios'
 
+// 统一格式化后端错误，避免 alert 显示 [object Object]
+function formatErr(err) {
+  const detail = err?.response?.data?.detail
+  if (detail) {
+    if (typeof detail === 'string') return detail
+    try {
+      return JSON.stringify(detail)
+    } catch {
+      return String(detail)
+    }
+  }
+  return err?.message || String(err)
+}
+
 /**
  * 左侧工具栏
  * - 上传图片到画布
- * - 文生图（prompt 输入框 + 生成按钮）
+ * - 文生图（模型选择 + prompt 输入框 + 生成按钮）
  * - 清空画布
  */
 export default function Toolbar({ onAddImage, onTextToImage, onClear, loading }) {
   const [t2iPrompt, setT2iPrompt] = useState('')
+  const [t2iModel, setT2iModel] = useState('comfyui-flux2')
   const [uploading, setUploading] = useState(false)
   const [generating, setGenerating] = useState(false)
   const fileInputRef = useRef(null)
@@ -28,7 +43,7 @@ export default function Toolbar({ onAddImage, onTextToImage, onClear, loading })
       }
     } catch (err) {
       console.error('Upload failed:', err)
-      alert('上传失败: ' + (err.response?.data?.detail || err.message))
+      alert('上传失败: ' + formatErr(err))
     } finally {
       setUploading(false)
       e.target.value = ''
@@ -40,7 +55,7 @@ export default function Toolbar({ onAddImage, onTextToImage, onClear, loading })
     if (!t2iPrompt.trim()) return
     setGenerating(true)
     try {
-      await onTextToImage(t2iPrompt.trim())
+      await onTextToImage(t2iPrompt.trim(), t2iModel)
     } finally {
       setGenerating(false)
     }
@@ -72,6 +87,21 @@ export default function Toolbar({ onAddImage, onTextToImage, onClear, loading })
 
       {/* 文生图 */}
       <div style={styles.sectionLabel}>文生图</div>
+      <select
+        style={styles.select}
+        value={t2iModel}
+        onChange={(e) => setT2iModel(e.target.value)}
+      >
+        <optgroup label="ComfyUI 工作流">
+          <option value="comfyui-flux2">Flux.2 Klein 9B FP8</option>
+          <option value="comfyui-qwen-image">QwenImage 文生图</option>
+        </optgroup>
+        <optgroup label="Google Gemini">
+          <option value="gemini-3.1-flash-lite-image">Gemini 3.1 Flash Lite（快速）</option>
+          <option value="gemini-3.1-flash-image">Gemini 3.1 Flash（高质量）</option>
+          <option value="gemini-3.1-pro-image">Gemini 3.1 Pro（最高质量）</option>
+        </optgroup>
+      </select>
       <textarea
         style={styles.textarea}
         placeholder="输入提示词生成图片..."
@@ -172,5 +202,18 @@ const styles = {
     fontFamily: 'inherit',
     boxSizing: 'border-box',
     outline: 'none',
+  },
+  select: {
+    width: '100%',
+    background: '#0d0d1a',
+    border: '1px solid #2a2a4a',
+    borderRadius: '8px',
+    color: '#e0e0e0',
+    padding: '10px',
+    fontSize: '13px',
+    fontFamily: 'inherit',
+    boxSizing: 'border-box',
+    outline: 'none',
+    cursor: 'pointer',
   },
 }

@@ -48,18 +48,28 @@ export default function FreeCanvas() {
   const [loading, setLoading] = useState(false)
 
   // 文生图：调用后端 → 结果加到画布中央
-  const handleTextToImage = async (prompt) => {
+  const handleTextToImage = async (prompt, model = 'comfyui-flux2') => {
     setLoading(true)
     try {
-      const res = await axios.post('/api/text-to-image', {
+      // 按模型设置合理默认参数
+      const isComfyui = model.startsWith('comfyui')
+      const isFlux2 = model === 'comfyui-flux2'
+      const payload = {
         prompt,
-        model: 'comfyui-flux2',
+        model,
         width: 1024,
         height: 1024,
-        steps: 20,
-        cfg: 3.5,
         seed: -1,
-      })
+      }
+      if (isFlux2) {
+        payload.steps = 20
+        payload.cfg = 3.5
+      } else if (isComfyui) {
+        // QwenImage 文生图
+        payload.steps = 8
+        payload.cfg = 1.0
+      }
+      const res = await axios.post('/api/text-to-image', payload)
       if (res.data.success && res.data.images?.[0]) {
         const img = res.data.images[0]
         const imgUrl = img.url || img.local_url
