@@ -9,6 +9,107 @@
   animation: spin 1s linear infinite;
 }
 
+/* ============ 顶部项目栏 ============ */
+.project-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 44px;
+  min-height: 44px;
+  padding: 0 12px;
+  background: #16162a;
+  border-bottom: 1px solid #2a2a4a;
+  box-sizing: border-box;
+  position: relative;
+  z-index: 20;
+}
+
+.project-name-input {
+  background: #0d0d1a;
+  border: 1px solid #2a2a4a;
+  border-radius: 6px;
+  color: #e0e0e0;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  width: 180px;
+}
+.project-name-input:focus { border-color: #3b82f6; }
+
+.project-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: #2a2a4a;
+  color: #e0e0e0;
+  border: 1px solid #2a2a4a;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.15s;
+}
+.project-btn:hover { background: #3a3a5a; }
+.project-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.project-btn-primary { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+.project-btn-primary:hover { background: #2563eb; }
+
+.project-btn-danger { background: transparent; color: #ef4444; border-color: #442222; }
+.project-btn-danger:hover { background: #2a1414; }
+
+.project-dropdown-wrap { position: relative; }
+
+.project-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 240px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: #1a1a2e;
+  border: 1px solid #2a2a4a;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  z-index: 30;
+  padding: 4px;
+}
+
+.project-dropdown-empty {
+  padding: 12px;
+  color: #666;
+  font-size: 13px;
+  text-align: center;
+}
+
+.project-dropdown-item {
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.project-dropdown-item:hover { background: #2a2a4a; }
+.project-dropdown-item.active { background: rgba(59, 130, 246, 0.15); }
+
+.project-dropdown-name {
+  color: #e0e0e0;
+  font-size: 13px;
+  font-weight: 500;
+}
+.project-dropdown-meta {
+  color: #666;
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+.project-bar-title {
+  color: #666;
+  font-size: 12px;
+  padding-right: 8px;
+}
+
 /* 画布容器 */
 .canvas-container {
   flex: 1;

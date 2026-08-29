@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 from constants import PROJECT_FILE_PATH
 from routes.generation import router as generation_router
+from routes.projects import router as projects_router
 
 app = FastAPI(title="AI 图片视频生成器", version="1.0.0")
 
@@ -38,6 +39,7 @@ async def root():
 
 
 app.include_router(generation_router)
+app.include_router(projects_router)
 
 
 if __name__ == "__main__":

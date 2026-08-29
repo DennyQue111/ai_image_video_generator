@@ -6,6 +6,7 @@ import { useCanvasElements } from '../hooks/useCanvasElements'
 import ImageNode from './ImageNode'
 import Toolbar from './Toolbar'
 import RightPanel from './RightPanel'
+import ProjectBar from './ProjectBar'
 
 const TOOLBAR_WIDTH = 240
 const RIGHT_PANEL_WIDTH = 300
@@ -45,9 +46,42 @@ export default function FreeCanvas() {
     addEdgeBetween,
     clearAll,
     bringToFront,
+    toSaveData,
+    loadFromData,
   } = useCanvasElements()
 
   const [loading, setLoading] = useState(false)
+  const [currentProject, setCurrentProject] = useState(null) // 当前项目名（null=未保存）
+
+  // 保存项目
+  const handleSaveProject = async (name) => {
+    const data = toSaveData()
+    const res = await axios.post('/api/projects/save', { name, ...data })
+    if (res.data.success) {
+      setCurrentProject(res.data.name)
+    }
+  }
+
+  // 加载项目
+  const handleLoadProject = async (name) => {
+    const res = await axios.get(`/api/projects/${encodeURIComponent(name)}`)
+    if (res.data.success && res.data.project) {
+      loadFromData(res.data.project)
+      setCurrentProject(res.data.project.name || name)
+    }
+  }
+
+  // 新建项目（清空画布）
+  const handleNewProject = async () => {
+    clearAll()
+    setCurrentProject(null)
+  }
+
+  // 删除当前项目后清空
+  const handleDeletedProject = async () => {
+    clearAll()
+    setCurrentProject(null)
+  }
 
   // 文生图：调用后端 → 结果加到画布中央
   const handleTextToImage = async (prompt, model = 'comfyui-flux2', width = 1024, height = 1024) => {
@@ -220,7 +254,17 @@ export default function FreeCanvas() {
   }
 
   return (
-    <div style={{ display: 'flex', width: '100vw', height: '100vh', overflow: 'hidden' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', width: '100vw', height: '100vh', overflow: 'hidden' }}>
+      {/* 顶部项目栏 */}
+      <ProjectBar
+        currentName={currentProject}
+        onSave={handleSaveProject}
+        onLoad={handleLoadProject}
+        onNew={handleNewProject}
+        onDelete={handleDeletedProject}
+      />
+
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
       {/* 左侧工具栏 */}
       <Toolbar
         onAddImage={(el) =>
@@ -288,6 +332,7 @@ export default function FreeCanvas() {
         onRemove={() => removeNode(selectedId)}
         onBringToFront={() => bringToFront(selectedId)}
       />
+      </div>
     </div>
   )
 }

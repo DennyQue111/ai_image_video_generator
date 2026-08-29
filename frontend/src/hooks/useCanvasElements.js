@@ -147,6 +147,62 @@ export function useCanvasElements() {
   // 多个选中（用于多图融合）
   const selectedElements = selectedNodes.map(toCompat)
 
+  // 序列化当前画布为可保存数据（只存必要字段 + URL 引用，不存 selected 等运行时状态）
+  const toSaveData = useCallback(() => {
+    const cleanNodes = nodes.map((n) => ({
+      id: n.id,
+      type: n.type,
+      position: n.position,
+      data: {
+        src: n.data.src,
+        width: n.data.width,
+        height: n.data.height,
+        mediaType: n.data.mediaType,
+      },
+    }))
+    const cleanEdges = edges.map((e) => ({
+      id: e.id,
+      source: e.source,
+      target: e.target,
+      sourceHandle: e.sourceHandle,
+      targetHandle: e.targetHandle,
+    }))
+    return { nodes: cleanNodes, edges: cleanEdges }
+  }, [nodes, edges])
+
+  // 从加载的数据还原画布（替换当前内容）
+  const loadFromData = useCallback(
+    (data) => {
+      if (!data || !Array.isArray(data.nodes)) return
+      setNodes(
+        data.nodes.map((n) => ({
+          id: n.id,
+          type: n.type || 'imageNode',
+          position: n.position || { x: 250, y: 200 },
+          data: {
+            src: n.data?.src,
+            width: n.data?.width || 256,
+            height: n.data?.height || 256,
+            mediaType: n.data?.mediaType || 'image',
+          },
+        }))
+      )
+      setEdges(
+        (data.edges || []).map((e) => ({
+          id: e.id,
+          source: e.source,
+          target: e.target,
+          sourceHandle: e.sourceHandle || 'output',
+          targetHandle: e.targetHandle || 'input',
+          animated: true,
+          style: { stroke: '#3b82f6', strokeWidth: 2 },
+        }))
+      )
+      setSelectedIds([])
+    },
+    [setNodes, setEdges]
+  )
+
   return {
     nodes,
     edges,
@@ -166,6 +222,8 @@ export function useCanvasElements() {
     addEdgeBetween,
     clearAll,
     bringToFront,
+    toSaveData,
+    loadFromData,
     setNodes,
     setEdges,
   }
