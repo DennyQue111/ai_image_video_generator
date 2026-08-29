@@ -9,6 +9,41 @@
   animation: spin 1s linear infinite;
 }
 
+/* ============ 顶部页签导航 ============ */
+.app-tabnav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 40px;
+  min-height: 40px;
+  padding: 0 16px;
+  background: #0d0d1a;
+  border-bottom: 1px solid #2a2a4a;
+  box-sizing: border-box;
+}
+
+.app-tab {
+  padding: 6px 16px;
+  color: #888;
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.app-tab:hover { color: #e0e0e0; background: #1a1a2e; }
+.app-tab.active {
+  color: #fff;
+  background: #3b82f6;
+}
+
+.app-tab-title {
+  color: #555;
+  font-size: 12px;
+  padding-right: 8px;
+}
+
 /* ============ 顶部项目栏 ============ */
 .project-bar {
   display: flex;

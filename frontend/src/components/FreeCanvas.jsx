@@ -254,7 +254,7 @@ export default function FreeCanvas() {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', width: '100vw', height: '100vh', overflow: 'hidden' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', overflow: 'hidden' }}>
       {/* 顶部项目栏 */}
       <ProjectBar
         currentName={currentProject}
