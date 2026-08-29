@@ -10,6 +10,7 @@ import { Sparkles, Video, ScanText, Trash2, Copy, ArrowUp } from 'lucide-react'
  */
 export default function RightPanel({
   selectedElement,
+  selectedElements = [],
   loading,
   onImageToImage,
   onImageToVideo,
@@ -21,7 +22,10 @@ export default function RightPanel({
   const [i2iPrompt, setI2iPrompt] = useState('')
   const [i2iModel, setI2iModel] = useState('gemini-2.5-flash-image')
   const [i2vPrompt, setI2vPrompt] = useState('')
+  const [i2vDuration, setI2vDuration] = useState(5) // 视频时长（秒），范围 2-15
   const [analyzedPrompt, setAnalyzedPrompt] = useState('')
+
+  const multiCount = selectedElements.length
 
   // 未选中元素时的空状态
   if (!selectedElement) {
@@ -85,6 +89,21 @@ export default function RightPanel({
       {/* 图生图 Tab */}
       {activeTab === 'i2i' && (
         <div>
+          {/* 选中数量提示 */}
+          <div style={{
+            padding: '6px 10px',
+            borderRadius: 6,
+            fontSize: 12,
+            background: multiCount > 1 ? 'rgba(59,130,246,0.15)' : 'rgba(45,45,74,0.4)',
+            color: multiCount > 1 ? '#60a5fa' : '#888',
+            border: `1px solid ${multiCount > 1 ? '#3b82f6' : '#2a2a4a'}`,
+            marginBottom: 8,
+          }}>
+            {multiCount > 1
+              ? `已选 ${multiCount} 张图 · 多图融合模式`
+              : '已选 1 张图 · 单图编辑模式'}
+          </div>
+
           <div className="panel-label">模型</div>
           <select
             className="canvas-input"
@@ -96,6 +115,11 @@ export default function RightPanel({
             <option value="comfyui-qwen-image-edit">QwenImage Edit（单图编辑）</option>
             <option value="comfyui-flux-kontext">Flux Kontext（多图融合）</option>
           </select>
+          {multiCount > 1 && i2iModel === 'comfyui-qwen-image-edit' && (
+            <div style={{ color: '#f59e0b', fontSize: 11, marginTop: 4 }}>
+              QwenImage Edit 仅支持单图，多图请选 Gemini 或 Flux Kontext
+            </div>
+          )}
 
           <div className="panel-label" style={{ marginTop: 8 }}>提示词</div>
           <textarea
@@ -109,10 +133,10 @@ export default function RightPanel({
           <button
             className="canvas-btn canvas-btn-primary"
             style={{ width: '100%', marginTop: 8, justifyContent: 'center' }}
-            disabled={loading || !i2iPrompt.trim()}
+            disabled={loading || !i2iPrompt.trim() || (multiCount > 1 && i2iModel === 'comfyui-qwen-image-edit')}
             onClick={() => onImageToImage(i2iPrompt, i2iModel)}
           >
-            <Sparkles size={16} /> {loading ? '生成中...' : '图生图'}
+            <Sparkles size={16} /> {loading ? '生成中...' : (multiCount > 1 ? `多图融合（${multiCount} 张）` : '图生图')}
           </button>
         </div>
       )}
@@ -129,11 +153,44 @@ export default function RightPanel({
             rows={3}
             style={{ marginTop: 4 }}
           />
+
+          <div className="panel-label" style={{ marginTop: 10 }}>视频时长（秒）</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+            <input
+              type="range"
+              min={2}
+              max={15}
+              step={1}
+              value={i2vDuration}
+              onChange={(e) => setI2vDuration(parseInt(e.target.value))}
+              style={{ flex: 1, cursor: 'pointer' }}
+            />
+            <span style={{ color: '#e0e0e0', fontSize: 14, minWidth: 32, textAlign: 'right' }}>
+              {i2vDuration}s
+            </span>
+          </div>
+          <input
+            type="number"
+            className="canvas-input"
+            min={2}
+            max={15}
+            step={1}
+            value={i2vDuration}
+            onChange={(e) => {
+              const v = parseInt(e.target.value)
+              if (!isNaN(v)) setI2vDuration(Math.min(15, Math.max(2, v)))
+            }}
+            style={{ marginTop: 4 }}
+          />
+          <div style={{ color: '#888', fontSize: 11, marginTop: 4, lineHeight: 1.5 }}>
+            范围 2–15 秒。时长越长越容易 OOM，12GB 显存建议 ≤8s，9s 以上请谨慎尝试。
+          </div>
+
           <button
             className="canvas-btn canvas-btn-success"
             style={{ width: '100%', marginTop: 8, justifyContent: 'center' }}
             disabled={loading}
-            onClick={() => onImageToVideo(i2vPrompt)}
+            onClick={() => onImageToVideo(i2vPrompt, i2vDuration)}
           >
             <Video size={16} /> {loading ? '生成中...' : '图生视频'}
           </button>

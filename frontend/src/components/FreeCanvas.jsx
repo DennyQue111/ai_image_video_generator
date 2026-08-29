@@ -34,9 +34,11 @@ export default function FreeCanvas() {
     edges,
     selectedId,
     selectedElement,
+    selectedElements,
     addNode,
     removeNode,
     selectNode,
+    onSelectionChange,
     onConnect,
     onNodesChange,
     onEdgesChange,
@@ -109,14 +111,16 @@ export default function FreeCanvas() {
   }
 
   // 图生图：选中图片作为源图 → 生成结果 → 自动连线
+  // 支持多图融合：选中多个节点时把所有图都作为输入
   const handleImageToImage = async (prompt, model = 'gemini-2.5-flash-image') => {
-    if (!selectedElement) return
+    const imgs = selectedElements.length > 0 ? selectedElements : selectedElement ? [selectedElement] : []
+    if (imgs.length === 0) return
     setLoading(true)
     try {
       const res = await axios.post('/api/image-to-image', {
         prompt,
         // 后端 ImageInput 期望 { url, description } 对象数组
-        images: [{ url: selectedElement.src }],
+        images: imgs.map((el) => ({ url: el.src })),
         model,
         width: 1024,
         height: 1024,
@@ -128,24 +132,23 @@ export default function FreeCanvas() {
         imgEl.crossOrigin = 'anonymous'
         imgEl.onload = () => {
           const maxSize = 256
-          let w = imgEl.width || selectedElement.width
-          let h = imgEl.height || selectedElement.height
+          let w = imgEl.width || imgs[0].width
+          let h = imgEl.height || imgs[0].height
           if (w > maxSize || h > maxSize) {
             const ratio = Math.min(maxSize / w, maxSize / h)
             w = Math.round(w * ratio)
             h = Math.round(h * ratio)
           }
-          // 结果放在源图右侧 + 自动连线
+          // 结果放在所有源图最右侧 + 从每个源图都连线到结果
+          const maxX = Math.max(...imgs.map((el) => el.x + el.width))
+          const minY = Math.min(...imgs.map((el) => el.y))
           const resultId = addNode({
             src: imgUrl,
             width: w,
             height: h,
-            position: {
-              x: selectedElement.x + selectedElement.width + 100,
-              y: selectedElement.y,
-            },
+            position: { x: maxX + 100, y: minY },
           })
-          addEdgeBetween(selectedId, resultId)
+          imgs.forEach((el) => addEdgeBetween(el.id, resultId))
         }
         imgEl.src = imgUrl
       }
@@ -157,14 +160,18 @@ export default function FreeCanvas() {
   }
 
   // 图生视频：选中图片 → 生成视频 → 自动连线
-  const handleImageToVideo = async (prompt) => {
+  const handleImageToVideo = async (prompt, duration = 5) => {
     if (!selectedElement) return
+    // 12GB 显存软警告：>8s 容易 OOM
+    if (duration > 8 && !confirm(`视频时长 ${duration}s 在 12GB 显存上可能 OOM，是否继续？`)) {
+      return
+    }
     setLoading(true)
     try {
       const res = await axios.post('/api/image-to-video', {
         model: 'comfyui-minimax',
         reference_images: [selectedElement.src],
-        duration: 5,
+        duration,
         prompt: prompt || '',
       })
       if (res.data.success && res.data.videos?.[0]) {
@@ -240,9 +247,11 @@ export default function FreeCanvas() {
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
-          onNodeClick={(_, node) => selectNode(node.id)}
+          onSelectionChange={onSelectionChange}
           onPaneClick={() => selectNode(null)}
           deleteKeyCode={['Delete', 'Backspace']}
+          multiSelectionKeyCode={['Control', 'Meta', 'Shift']}
+          selectionOnDrag
           fitView
           fitViewOptions={{ padding: 0.2 }}
           defaultEdgeOptions={{
@@ -263,7 +272,7 @@ export default function FreeCanvas() {
           <div className="canvas-hint">
             上传图片或使用文生图开始创作
             <br />
-            从图片右侧端口拖线可连接到其他图片
+            选中图片做图生图/图生视频；Ctrl+点击可选多张图做融合
           </div>
         )}
       </div>
@@ -271,6 +280,7 @@ export default function FreeCanvas() {
       {/* 右侧面板 */}
       <RightPanel
         selectedElement={selectedElement}
+        selectedElements={selectedElements}
         loading={loading}
         onImageToImage={handleImageToImage}
         onImageToVideo={handleImageToVideo}

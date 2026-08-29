@@ -11,8 +11,13 @@ const genId = () => `node_${Date.now()}_${idCounter++}`
 export function useCanvasElements() {
   const [nodes, setNodes, onNodesChange] = useNodesState([])
   const [edges, setEdges, onEdgesChange] = useEdgesState([])
-  const [selectedId, setSelectedId] = useState(null)
+  const [selectedIds, setSelectedIds] = useState([])
   const edgeIdRef = useRef(0)
+
+  // React Flow 原生选中变化回调（支持多选：Ctrl/Cmd+点击 或 框选）
+  const onSelectionChange = useCallback(({ nodes: selNodes }) => {
+    setSelectedIds(selNodes.map((n) => n.id))
+  }, [])
 
   // 添加节点，返回节点 id
   const addNode = useCallback(
@@ -42,7 +47,7 @@ export function useCanvasElements() {
     (id) => {
       setNodes((prev) => prev.filter((n) => n.id !== id))
       setEdges((prev) => prev.filter((e) => e.source !== id && e.target !== id))
-      setSelectedId((prev) => (prev === id ? null : prev))
+      setSelectedIds((prev) => prev.filter((sid) => sid !== id))
     },
     [setNodes, setEdges]
   )
@@ -59,12 +64,11 @@ export function useCanvasElements() {
     [setNodes]
   )
 
-  // 选中节点
+  // 选中节点（单选模式；多选由 React Flow 原生交互 + onSelectionChange 处理）
   const selectNode = useCallback(
     (id) => {
-      setSelectedId(id)
       setNodes((prev) =>
-        prev.map((n) => ({ ...n, selected: n.id === id }))
+        prev.map((n) => ({ ...n, selected: id ? n.id === id : false }))
       )
     },
     [setNodes]
@@ -104,7 +108,7 @@ export function useCanvasElements() {
   const clearAll = useCallback(() => {
     setNodes([])
     setEdges([])
-    setSelectedId(null)
+    setSelectedIds([])
   }, [setNodes, setEdges])
 
   // 置顶节点（移动到数组末尾，React Flow 会最后渲染）
@@ -119,32 +123,43 @@ export function useCanvasElements() {
     [setNodes]
   )
 
-  // 选中的节点对象
-  const selectedNode = nodes.find((n) => n.id === selectedId) || null
+  // 当前选中的节点 id（多选时取最后一个，作为“主”选中用于单图操作）
+  const selectedId = selectedIds[selectedIds.length - 1] || null
 
-  // 兼容 RightPanel 的 selectedElement 格式
-  const selectedElement = selectedNode
-    ? {
-        id: selectedNode.id,
-        src: selectedNode.data.src,
-        width: selectedNode.data.width,
-        height: selectedNode.data.height,
-        type: selectedNode.data.mediaType,
-        x: selectedNode.position.x,
-        y: selectedNode.position.y,
-      }
-    : null
+  // 所有选中节点
+  const selectedNodes = nodes.filter((n) => selectedIds.includes(n.id))
+  const selectedNode =
+    selectedNodes.find((n) => n.id === selectedId) || selectedNodes[0] || null
+
+  // 节点 → 兼容 RightPanel 的元素格式
+  const toCompat = (n) => ({
+    id: n.id,
+    src: n.data.src,
+    width: n.data.width,
+    height: n.data.height,
+    type: n.data.mediaType,
+    x: n.position.x,
+    y: n.position.y,
+  })
+
+  // 单个选中（兼容现有单图操作：图生视频、分析等）
+  const selectedElement = selectedNode ? toCompat(selectedNode) : null
+  // 多个选中（用于多图融合）
+  const selectedElements = selectedNodes.map(toCompat)
 
   return {
     nodes,
     edges,
     selectedId,
+    selectedIds,
     selectedElement,
+    selectedElements,
     selectedNode,
     addNode,
     removeNode,
     updateNode,
     selectNode,
+    onSelectionChange,
     onConnect,
     onNodesChange,
     onEdgesChange,
