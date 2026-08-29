@@ -25,6 +25,8 @@ function formatErr(err) {
 export default function Toolbar({ onAddImage, onTextToImage, onClear, loading }) {
   const [t2iPrompt, setT2iPrompt] = useState('')
   const [t2iModel, setT2iModel] = useState('comfyui-flux2')
+  const [t2iWidth, setT2iWidth] = useState(1024)
+  const [t2iHeight, setT2iHeight] = useState(1024)
   const [uploading, setUploading] = useState(false)
   const [generating, setGenerating] = useState(false)
   const fileInputRef = useRef(null)
@@ -55,13 +57,21 @@ export default function Toolbar({ onAddImage, onTextToImage, onClear, loading })
     if (!t2iPrompt.trim()) return
     setGenerating(true)
     try {
-      await onTextToImage(t2iPrompt.trim(), t2iModel)
+      await onTextToImage(t2iPrompt.trim(), t2iModel, t2iWidth, t2iHeight)
     } finally {
       setGenerating(false)
     }
   }
 
   const isLoading = loading || generating
+
+  // 分辨率预设（单位：像素 px）
+  const presets = [
+    { label: '1:1', w: 1024, h: 1024 },
+    { label: '16:9', w: 1344, h: 768 },
+    { label: '9:16', w: 768, h: 1344 },
+    { label: '1920×1080', w: 1920, h: 1080 },
+  ]
 
   return (
     <div style={styles.toolbar}>
@@ -102,6 +112,51 @@ export default function Toolbar({ onAddImage, onTextToImage, onClear, loading })
           <option value="gemini-3.1-pro-image">Gemini 3.1 Pro（最高质量）</option>
         </optgroup>
       </select>
+
+      {/* 分辨率配置（单位：像素 px） */}
+      <div style={styles.sizeRow}>
+        <div style={styles.sizeField}>
+          <label style={styles.sizeLabel}>宽 (px)</label>
+          <input
+            type="number"
+            style={styles.sizeInput}
+            value={t2iWidth}
+            min={64}
+            step={1}
+            onChange={(e) => setT2iWidth(Math.max(64, parseInt(e.target.value) || 0))}
+          />
+        </div>
+        <div style={styles.sizeField}>
+          <label style={styles.sizeLabel}>高 (px)</label>
+          <input
+            type="number"
+            style={styles.sizeInput}
+            value={t2iHeight}
+            min={64}
+            step={1}
+            onChange={(e) => setT2iHeight(Math.max(64, parseInt(e.target.value) || 0))}
+          />
+        </div>
+      </div>
+      <div style={styles.presetRow}>
+        {presets.map((p) => (
+          <button
+            key={p.label}
+            style={{
+              ...styles.presetBtn,
+              ...(t2iWidth === p.w && t2iHeight === p.h ? styles.presetBtnActive : {}),
+            }}
+            onClick={() => {
+              setT2iWidth(p.w)
+              setT2iHeight(p.h)
+            }}
+            title={`${p.w}×${p.h}`}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+
       <textarea
         style={styles.textarea}
         placeholder="输入提示词生成图片..."
@@ -215,5 +270,55 @@ const styles = {
     boxSizing: 'border-box',
     outline: 'none',
     cursor: 'pointer',
+  },
+  sizeRow: {
+    display: 'flex',
+    gap: 8,
+  },
+  sizeField: {
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 4,
+  },
+  sizeLabel: {
+    color: '#888',
+    fontSize: 11,
+    fontWeight: 600,
+  },
+  sizeInput: {
+    width: '100%',
+    background: '#0d0d1a',
+    border: '1px solid #2a2a4a',
+    borderRadius: '6px',
+    color: '#e0e0e0',
+    padding: '8px',
+    fontSize: 13,
+    fontFamily: 'inherit',
+    boxSizing: 'border-box',
+    outline: 'none',
+  },
+  presetRow: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: 4,
+  },
+  presetBtn: {
+    flex: 1,
+    minWidth: 0,
+    padding: '6px 4px',
+    background: '#0d0d1a',
+    color: '#aaa',
+    border: '1px solid #2a2a4a',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    fontSize: 11,
+    fontWeight: 500,
+    transition: 'all 0.15s',
+  },
+  presetBtnActive: {
+    background: '#3b82f6',
+    color: '#fff',
+    borderColor: '#3b82f6',
   },
 }

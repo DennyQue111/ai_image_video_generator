@@ -48,17 +48,21 @@ export default function FreeCanvas() {
   const [loading, setLoading] = useState(false)
 
   // 文生图：调用后端 → 结果加到画布中央
-  const handleTextToImage = async (prompt, model = 'comfyui-flux2') => {
+  const handleTextToImage = async (prompt, model = 'comfyui-flux2', width = 1024, height = 1024) => {
     setLoading(true)
     try {
       // 按模型设置合理默认参数
       const isComfyui = model.startsWith('comfyui')
       const isFlux2 = model === 'comfyui-flux2'
+      // Flux2 的 latent 要求宽高是 16 的倍数，自动对齐
+      const align16 = (v) => Math.max(16, Math.round(v / 16) * 16)
+      const finalWidth = isFlux2 ? align16(width) : width
+      const finalHeight = isFlux2 ? align16(height) : height
       const payload = {
         prompt,
         model,
-        width: 1024,
-        height: 1024,
+        width: finalWidth,
+        height: finalHeight,
         seed: -1,
       }
       if (isFlux2) {
