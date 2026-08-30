@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { FolderOpen, Save, FilePlus, Trash2, ChevronDown, Loader2 } from 'lucide-react'
+import { FolderOpen, Save, FilePlus, Trash2, ChevronDown, Loader2, Brush } from 'lucide-react'
 import axios from 'axios'
 
 function formatErr(err) {
@@ -105,6 +105,33 @@ export default function ProjectBar({ currentName, onSave, onLoad, onNew, onDelet
     setNameInput('')
   }
 
+  // 清理 uploads 目录中未被任何画布项目/镜头表引用的孤立文件
+  const handleCleanup = async () => {
+    setBusy(true)
+    try {
+      // 先预览孤立文件
+      const preview = await axios.get('/api/uploads/orphans')
+      if (!preview.data.success) return
+      const { count, total_size_kb } = preview.data
+      if (count === 0) {
+        alert('没有孤立文件需要清理，uploads 目录很干净。')
+        return
+      }
+      if (!confirm(`发现 ${count} 个孤立文件（约 ${total_size_kb} KB）未被任何项目引用。\n确认删除这些文件吗？此操作不可恢复。`)) {
+        return
+      }
+      // 确认后执行删除
+      const res = await axios.post('/api/uploads/cleanup')
+      if (res.data.success) {
+        alert(`清理完成：删除 ${res.data.deleted} 个文件，释放 ${res.data.freed_kb} KB`)
+      }
+    } catch (err) {
+      alert('清理失败: ' + formatErr(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <div className="project-bar" ref={dropdownRef}>
       <button className="project-btn" onClick={handleNew} disabled={busy} title="新建项目（清空画布）">
@@ -178,6 +205,14 @@ export default function ProjectBar({ currentName, onSave, onLoad, onNew, onDelet
       <div className="project-bar-title">
         {currentName ? `当前项目：${currentName}` : '未保存项目'}
       </div>
+      <button
+        className="project-btn"
+        onClick={handleCleanup}
+        disabled={busy}
+        title="清理未被引用的上传文件"
+      >
+        {busy ? <Loader2 size={16} className="spin" /> : <Brush size={16} />}
+      </button>
     </div>
   )
 }

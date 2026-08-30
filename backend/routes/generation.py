@@ -783,3 +783,118 @@ async def scene_hdr(request: SceneHDRRequest):
     except Exception as e:
         logger.error("[API] scene-hdr: 生成失败: %s", e)
         raise HTTPException(status_code=500, detail=f"场景图 HDR 生成失败: {str(e)}")
+
+
+# ============ 上传文件清理 ============
+
+import re as _re
+
+# /static/projects/<相对路径> 的引用前缀
+_STATIC_PREFIX = "/static/projects/"
+
+# 存放引用 uploads 文件的 JSON 目录（画布项目 + 镜头表）
+_REF_JSON_DIRS = [
+    Path(PROJECT_FILE_PATH) / "_temp" / "projects",
+    Path(PROJECT_FILE_PATH) / "_temp" / "shotbreakdown",
+]
+
+
+def _collect_referenced_rel_paths() -> set:
+    """扫描所有画布项目/镜头表 JSON，收集被引用的文件相对路径（相对 PROJECT_FILE_PATH）。
+
+    匹配 JSON 文本里所有 /static/projects/xxx 形式的字符串，提取 xxx 部分。
+    """
+    referenced = set()
+    for d in _REF_JSON_DIRS:
+        if not d.exists():
+            continue
+        for json_path in d.glob("*.json"):
+            try:
+                text = json_path.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            for m in _re.finditer(r"/static/projects/([^\s\"',\]\}]+)", text):
+                referenced.add(m.group(1))
+    return referenced
+
+
+@router.post("/api/uploads/cleanup")
+async def cleanup_uploads():
+    """清理 uploads 目录中未被任何画布项目/镜头表引用的孤立文件。
+
+    只清理 generator_outputs/uploads/ 子目录，不影响生成结果目录。
+    返回删除的文件数和释放的空间。
+    """
+    upload_dir = OUTPUT_DIR / "uploads"
+    if not upload_dir.exists():
+        return {"success": True, "deleted": 0, "freed_bytes": 0, "message": "uploads 目录不存在"}
+
+    referenced = _collect_referenced_rel_paths()
+    deleted_files = []
+    freed_bytes = 0
+
+    for f in upload_dir.iterdir():
+        if not f.is_file():
+            continue
+        try:
+            rel = f.relative_to(PROJECT_FILE_PATH).as_posix()
+        except ValueError:
+            continue
+        # 不在引用集合中 => 孤立文件，删除
+        if rel not in referenced:
+            try:
+                size = f.stat().st_size
+                f.unlink()
+                deleted_files.append(f.name)
+                freed_bytes += size
+            except Exception as e:
+                logger.warning("[Cleanup] 删除失败 %s: %s", f, e)
+
+    logger.info("[Cleanup] uploads 清理完成: 删除 %d 个文件, 释放 %.2f KB",
+                len(deleted_files), freed_bytes / 1024)
+    return {
+        "success": True,
+        "deleted": len(deleted_files),
+        "freed_bytes": freed_bytes,
+        "freed_kb": round(freed_bytes / 1024, 2),
+        "deleted_files": deleted_files[:50],  # 最多返回前 50 个文件名
+    }
+
+
+@router.get("/api/uploads/orphans")
+async def list_orphans():
+    """列出 uploads 目录中未被引用的孤立文件（不删除，仅预览）。"""
+    upload_dir = OUTPUT_DIR / "uploads"
+    if not upload_dir.exists():
+        return {"success": True, "orphans": [], "total_size_bytes": 0}
+
+    referenced = _collect_referenced_rel_paths()
+    orphans = []
+    total_size = 0
+
+    for f in upload_dir.iterdir():
+        if not f.is_file():
+            continue
+        try:
+            rel = f.relative_to(PROJECT_FILE_PATH).as_posix()
+        except ValueError:
+            continue
+        if rel not in referenced:
+            try:
+                size = f.stat().st_size
+                orphans.append({
+                    "filename": f.name,
+                    "size_bytes": size,
+                    "size_kb": round(size / 1024, 2),
+                })
+                total_size += size
+            except Exception:
+                pass
+
+    return {
+        "success": True,
+        "orphans": orphans,
+        "count": len(orphans),
+        "total_size_bytes": total_size,
+        "total_size_kb": round(total_size / 1024, 2),
+    }
