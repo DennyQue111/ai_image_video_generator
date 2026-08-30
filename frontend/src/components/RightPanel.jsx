@@ -233,9 +233,9 @@ export default function RightPanel({
         </div>
       )}
 
-      <div style={{ flex: 1 }} />
+      <div style={{ marginTop: 4, paddingTop: 8, borderTop: '1px solid #2a2a4a' }} />
 
-      {/* 底部元素操作 */}
+      {/* 元素操作 */}
       <button
         className="canvas-btn canvas-btn-primary"
         style={{ justifyContent: 'center' }}
