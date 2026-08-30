@@ -21,11 +21,21 @@ export default function RightPanel({
   const [activeTab, setActiveTab] = useState('i2i')
   const [i2iPrompt, setI2iPrompt] = useState('')
   const [i2iModel, setI2iModel] = useState('gemini-2.5-flash-image')
+  const [i2iWidth, setI2iWidth] = useState(1024) // 图生图输出宽（像素 px）
+  const [i2iHeight, setI2iHeight] = useState(1024) // 图生图输出高（像素 px）
   const [i2vPrompt, setI2vPrompt] = useState('')
   const [i2vDuration, setI2vDuration] = useState(5) // 视频时长（秒），范围 2-15
   const [analyzedPrompt, setAnalyzedPrompt] = useState('')
 
   const multiCount = selectedElements.length
+
+  // 图生图分辨率预设（单位：像素 px），与文生图一致
+  const i2iPresets = [
+    { label: '1:1', w: 1024, h: 1024 },
+    { label: '16:9', w: 1344, h: 768 },
+    { label: '9:16', w: 768, h: 1344 },
+    { label: '1920×1080', w: 1920, h: 1080 },
+  ]
 
   // 未选中元素时的空状态
   if (!selectedElement) {
@@ -130,11 +140,65 @@ export default function RightPanel({
             rows={4}
             style={{ marginTop: 4 }}
           />
+
+          {/* 分辨率配置（单位：像素 px），与文生图一致 */}
+          <div className="panel-label" style={{ marginTop: 8 }}>输出尺寸 (px)</div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+            <div style={{ flex: 1 }}>
+              <label style={{ color: '#888', fontSize: 11, fontWeight: 600 }}>宽</label>
+              <input
+                type="number"
+                className="canvas-input"
+                value={i2iWidth}
+                min={64}
+                step={1}
+                onChange={(e) => setI2iWidth(Math.max(64, parseInt(e.target.value) || 0))}
+                style={{ marginTop: 2 }}
+              />
+            </div>
+            <div style={{ flex: 1 }}>
+              <label style={{ color: '#888', fontSize: 11, fontWeight: 600 }}>高</label>
+              <input
+                type="number"
+                className="canvas-input"
+                value={i2iHeight}
+                min={64}
+                step={1}
+                onChange={(e) => setI2iHeight(Math.max(64, parseInt(e.target.value) || 0))}
+                style={{ marginTop: 2 }}
+              />
+            </div>
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+            {i2iPresets.map((p) => (
+              <button
+                key={p.label}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  padding: '6px 4px',
+                  background: i2iWidth === p.w && i2iHeight === p.h ? '#3b82f6' : '#0d0d1a',
+                  color: i2iWidth === p.w && i2iHeight === p.h ? '#fff' : '#aaa',
+                  border: `1px solid ${i2iWidth === p.w && i2iHeight === p.h ? '#3b82f6' : '#2a2a4a'}`,
+                  borderRadius: 6,
+                  cursor: 'pointer',
+                  fontSize: 11,
+                  fontWeight: 500,
+                  transition: 'all 0.15s',
+                }}
+                title={`${p.w}×${p.h}`}
+                onClick={() => { setI2iWidth(p.w); setI2iHeight(p.h) }}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+
           <button
             className="canvas-btn canvas-btn-primary"
             style={{ width: '100%', marginTop: 8, justifyContent: 'center' }}
             disabled={loading || !i2iPrompt.trim() || (multiCount > 1 && i2iModel === 'comfyui-qwen-image-edit')}
-            onClick={() => onImageToImage(i2iPrompt, i2iModel)}
+            onClick={() => onImageToImage(i2iPrompt, i2iModel, i2iWidth, i2iHeight)}
           >
             <Sparkles size={16} /> {loading ? '生成中...' : (multiCount > 1 ? `多图融合（${multiCount} 张）` : '图生图')}
           </button>

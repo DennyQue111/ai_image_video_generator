@@ -146,9 +146,14 @@ export default function FreeCanvas() {
 
   // 图生图：选中图片作为源图 → 生成结果 → 自动连线
   // 支持多图融合：选中多个节点时把所有图都作为输入
-  const handleImageToImage = async (prompt, model = 'gemini-2.5-flash-image') => {
+  const handleImageToImage = async (prompt, model = 'gemini-2.5-flash-image', width = 1024, height = 1024) => {
     const imgs = selectedElements.length > 0 ? selectedElements : selectedElement ? [selectedElement] : []
     if (imgs.length === 0) return
+    // Flux2 latent 要求宽高各为 16 的倍数，就近对齐
+    const isFlux2 = model === 'comfyui-flux-kontext'
+    const align16 = (v) => Math.max(16, Math.round(v / 16) * 16)
+    const finalWidth = isFlux2 ? align16(width) : width
+    const finalHeight = isFlux2 ? align16(height) : height
     setLoading(true)
     try {
       const res = await axios.post('/api/image-to-image', {
@@ -156,8 +161,8 @@ export default function FreeCanvas() {
         // 后端 ImageInput 期望 { url, description } 对象数组
         images: imgs.map((el) => ({ url: el.src })),
         model,
-        width: 1024,
-        height: 1024,
+        width: finalWidth,
+        height: finalHeight,
       })
       if (res.data.success && res.data.images?.[0]) {
         const img = res.data.images[0]
