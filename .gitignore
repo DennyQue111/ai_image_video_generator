@@ -19,3 +19,6 @@ outputs/
 .trae/
 .vscode/
 .idea/
+
+# Archived legacy configs (not tracked)
+archived/

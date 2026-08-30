@@ -571,20 +571,22 @@ class ComfyUIClient:
         prompt: str,
         negative_prompt: str = "",
         seed: int = -1,
-        steps: int = 25,
+        steps: int = 20,
         cfg: float = 1.0,
-        guidance: float = 2.5,
+        guidance: float = 4.0,
         num_images: int = 1,
         width: int = 1024,
         height: int = 1024,
     ) -> Dict[str, Any]:
-        """构建 Flux Kontext 图生图工作流（支持多图参考）
+        """构建 Flux.2 多图编辑工作流（支持多图参考，对齐官方 Flux2 双图编辑结构）
 
-        标准结构（参考 ComfyUI 官方 Flux Kontext Dev 工作流）：
-        - CLIPTextEncode(prompt) → ReferenceLatent × N → FluxGuidance → KSampler.positive
-        - VAEEncode(LoadImage) → ReferenceLatent latent（参考图注入条件而非 latent_image）
-        - EmptySD3LatentImage → KSampler.latent_image
-        - KSampler(cfg=1.0, denoise=1.0)
+        结构（参考 ComfyUI 官方 FLUX.2 Klein 双图编辑工作流）：
+        - UNETLoader(flux-2-klein-9b-fp8) + CLIPLoader(qwen_3_8b, type=flux2) + VAELoader(flux2-vae)
+        - CLIPTextEncode(prompt) → FluxGuidance → ReferenceLatent[图1] → ReferenceLatent[图2] → ... → BasicGuider
+        - 每张参考图：LoadImage → VAEEncode → ReferenceLatent（链式注入 conditioning）
+        - EmptyFlux2LatentImage → SamplerCustomAdvanced.latent_image
+        - Flux2Scheduler + KSamplerSelect(euler) + RandomNoise + BasicGuider → SamplerCustomAdvanced
+        注：SamplerCustomAdvanced 不支持 negative，negative_prompt 仅保留参数兼容性
         """
         import random
         if seed == -1:
@@ -592,66 +594,77 @@ class ComfyUIClient:
 
         workflow = {
             # --- 模型加载 ---
-            "12": {
+            "60": {
                 "class_type": "UNETLoader",
-                "inputs": {"unet_name": "flux1-dev-kontext_fp8_scaled.safetensors", "weight_dtype": "default"},
+                "inputs": {"unet_name": "flux-2-klein-9b-fp8.safetensors", "weight_dtype": "default"},
             },
-            "11": {
-                "class_type": "DualCLIPLoader",
-                "inputs": {
-                    "clip_name1": "clip_l.safetensors",
-                    "clip_name2": "t5xxl_fp8_e4m3fn.safetensors",
-                    "type": "flux",
-                },
+            "61": {
+                "class_type": "CLIPLoader",
+                "inputs": {"clip_name": "qwen_3_8b_fp8mixed.safetensors", "type": "flux2", "device": "default"},
             },
-            "13": {
+            "44": {
                 "class_type": "VAELoader",
-                "inputs": {"vae_name": "ae.safetensors"},
+                "inputs": {"vae_name": "flux2-vae.safetensors"},
             },
             # --- 文本编码 ---
-            "6": {
+            "55": {
                 "class_type": "CLIPTextEncode",
-                "inputs": {"text": prompt, "clip": ["11", 0]},
+                "inputs": {"text": prompt, "clip": ["61", 0]},
             },
-            "7": {
-                "class_type": "CLIPTextEncode",
-                "inputs": {"text": negative_prompt, "clip": ["11", 0]},
+            # --- FluxGuidance ---
+            "48": {
+                "class_type": "FluxGuidance",
+                "inputs": {"conditioning": ["55", 0], "guidance": guidance},
             },
-            # --- 空白 latent（KSampler 的 latent_image，denoise=1.0 时参考图通过条件注入）---
-            "17": {
-                "class_type": "EmptySD3LatentImage",
+            # --- 空白 latent（Flux2 用 128 通道，EmptyFlux2LatentImage）---
+            "59": {
+                "class_type": "EmptyFlux2LatentImage",
                 "inputs": {"width": width, "height": height, "batch_size": 1},
             },
-            # --- 采样 ---
-            "3": {
-                "class_type": "KSampler",
+            # --- 采样组件：Flux2Scheduler + KSamplerSelect + RandomNoise + BasicGuider ---
+            "42": {
+                "class_type": "Flux2Scheduler",
+                "inputs": {"steps": steps, "width": width, "height": height},
+            },
+            "51": {
+                "class_type": "KSamplerSelect",
+                "inputs": {"sampler_name": "euler"},
+            },
+            "56": {
+                "class_type": "RandomNoise",
+                "inputs": {"noise_seed": seed},
+            },
+            # BasicGuider 的 conditioning 在动态构建 ReferenceLatent 链后回填
+            "43": {
+                "class_type": "BasicGuider",
+                "inputs": {"model": ["60", 0], "conditioning": ["53", 0]},
+            },
+            # --- 采样器（SamplerCustomAdvanced，Flux2 标准做法）---
+            "50": {
+                "class_type": "SamplerCustomAdvanced",
                 "inputs": {
-                    "seed": seed,
-                    "steps": steps,
-                    "cfg": cfg,  # Flux 用 1.0，引导力由 FluxGuidance 控制
-                    "sampler_name": "euler",
-                    "scheduler": "simple",
-                    "denoise": 1.0,
-                    "model": ["12", 0],
-                    "positive": ["16", 0],  # FluxGuidance 输出
-                    "negative": ["7", 0],
-                    "latent_image": ["17", 0],  # 空白 latent
+                    "noise": ["56", 0],
+                    "guider": ["43", 0],
+                    "sampler": ["51", 0],
+                    "sigmas": ["42", 0],
+                    "latent_image": ["59", 0],
                 },
             },
             # --- 解码保存 ---
-            "8": {
+            "49": {
                 "class_type": "VAEDecode",
-                "inputs": {"samples": ["3", 0], "vae": ["13", 0]},
+                "inputs": {"samples": ["50", 0], "vae": ["44", 0]},
             },
-            "9": {
+            "41": {
                 "class_type": "SaveImage",
-                "inputs": {"images": ["8", 0], "filename_prefix": "flux_kontext_i2i"},
+                "inputs": {"images": ["49", 0], "filename_prefix": "flux2_i2i"},
             },
         }
 
         # --- 动态添加参考图像节点（链式 ReferenceLatent）---
         # 每张参考图：LoadImage(100+i) → VAEEncode(110+i) → ReferenceLatent(120+i)
-        current_conditioning = ["6", 0]  # 从 CLIPTextEncode 正面条件开始
+        # 链路：FluxGuidance(48) → ReferenceLatent[图1] → ReferenceLatent[图2] → ... → BasicGuider(43)
+        current_conditioning = ["48", 0]  # 从 FluxGuidance 输出开始
         for i in range(num_images):
             load_id = str(100 + i)
             vae_encode_id = str(110 + i)
@@ -663,7 +676,7 @@ class ComfyUIClient:
             }
             workflow[vae_encode_id] = {
                 "class_type": "VAEEncode",
-                "inputs": {"pixels": [load_id, 0], "vae": ["13", 0]},
+                "inputs": {"pixels": [load_id, 0], "vae": ["44", 0]},
             }
             workflow[ref_latent_id] = {
                 "class_type": "ReferenceLatent",
@@ -674,11 +687,9 @@ class ComfyUIClient:
             }
             current_conditioning = [ref_latent_id, 0]
 
-        # --- FluxGuidance（接在最后一个 ReferenceLatent 之后）---
-        workflow["16"] = {
-            "class_type": "FluxGuidance",
-            "inputs": {"conditioning": current_conditioning, "guidance": guidance},
-        }
+        # --- 最后一个 ReferenceLatent 接到 BasicGuider 的 conditioning ---
+        # 只有当有参考图时才覆盖 BasicGuider 的 conditioning；无参考图时用 FluxGuidance 输出
+        workflow["43"]["inputs"]["conditioning"] = current_conditioning
 
         return workflow
 
@@ -726,15 +737,15 @@ class ComfyUIClient:
         source_image_urls: list,
         edit_prompt: str,
         negative_prompt: str = "",
-        steps: int = 25,
+        steps: int = 20,
         cfg: float = 1.0,
-        guidance: float = 2.5,
+        guidance: float = 4.0,
         seed: int = -1,
         width: int = 1024,
         height: int = 1024,
         timeout: int = 300,
     ) -> Dict[str, Any]:
-        """使用 Flux Kontext 进行图片编辑（支持多图参考）"""
+        """使用 Flux.2 Klein 进行多图编辑（支持多图参考，对齐官方 Flux2 双图编辑工作流）"""
         num_images = len(source_image_urls)
         logger.info("[ComfyUI] generate_flux_kontext_i2i_and_wait, num_images=%d", num_images)
         workflow = self._build_flux_kontext_i2i_workflow(

@@ -113,11 +113,11 @@ export default function RightPanel({
           >
             <option value="gemini-2.5-flash-image">Gemini 2.5 Flash（多图合成）</option>
             <option value="comfyui-qwen-image-edit">QwenImage Edit（单图编辑）</option>
-            <option value="comfyui-flux-kontext">Flux Kontext（多图融合）</option>
+            <option value="comfyui-flux-kontext">Flux.2 Klein 多图编辑</option>
           </select>
           {multiCount > 1 && i2iModel === 'comfyui-qwen-image-edit' && (
             <div style={{ color: '#f59e0b', fontSize: 11, marginTop: 4 }}>
-              QwenImage Edit 仅支持单图，多图请选 Gemini 或 Flux Kontext
+              QwenImage Edit 仅支持单图，多图请选 Gemini 或 Flux.2 多图编辑
             </div>
           )}
 

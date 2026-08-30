@@ -12,7 +12,7 @@ function TabNav() {
       <NavLink to="/free_canvas" className={({ isActive }) => `app-tab ${isActive ? 'active' : ''}`}>
         自由画布
       </NavLink>
-      <NavLink to="/project_management" className={({ isActive }) => `app-tab ${isActive ? 'active' : ''}`}>
+      <NavLink to="/shot_breakdown" className={({ isActive }) => `app-tab ${isActive ? 'active' : ''}`}>
         镜头表管理
       </NavLink>
       <div style={{ flex: 1 }} />
@@ -32,7 +32,7 @@ function Layout() {
         <Routes>
           <Route path="/" element={<FreeCanvas />} />
           <Route path="/free_canvas" element={<FreeCanvas />} />
-          <Route path="/project_management" element={<ProjectManagement />} />
+          <Route path="/shot_breakdown" element={<ProjectManagement />} />
         </Routes>
       </div>
     </div>
