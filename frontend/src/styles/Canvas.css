@@ -206,6 +206,33 @@
   border-color: #3b82f6;
 }
 
+/* 图生图子页签（预设/放大）— 比主页签更小更内敛 */
+.right-panel-subtabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+  padding: 3px;
+  background: #0d0d1a;
+  border-radius: 6px;
+  border: 1px solid #2a2a4a;
+}
+.right-panel-subtab {
+  flex: 1;
+  padding: 5px 8px;
+  background: transparent;
+  color: #888;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  text-align: center;
+  transition: all 0.15s;
+}
+.right-panel-subtab.active {
+  background: #3b82f6;
+  color: #fff;
+}
+
 /* 通用按钮 */
 .canvas-btn {
   display: flex;

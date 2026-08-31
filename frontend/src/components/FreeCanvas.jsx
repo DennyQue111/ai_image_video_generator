@@ -198,6 +198,48 @@ export default function FreeCanvas() {
     }
   }
 
+  // 图生图·放大：选中单图 → SeedVR2 超清放大 → 结果作为新节点连线到原图
+  const handleUpscale = async (ratio = 2) => {
+    const el = selectedElement
+    if (!el) return
+    setLoading(true)
+    try {
+      const res = await axios.post('/api/upscale-image', {
+        image_url: el.src,
+        ratio,
+        model: 'comfyui-seedvr2',
+      })
+      if (res.data.success && res.data.images?.[0]) {
+        const img = res.data.images[0]
+        const imgUrl = img.url || img.local_url
+        const imgEl = new window.Image()
+        imgEl.crossOrigin = 'anonymous'
+        imgEl.onload = () => {
+          const maxSize = 320
+          let w = imgEl.width || el.width
+          let h = imgEl.height || el.height
+          if (w > maxSize || h > maxSize) {
+            const r = Math.min(maxSize / w, maxSize / h)
+            w = Math.round(w * r)
+            h = Math.round(h * r)
+          }
+          const resultId = addNode({
+            src: imgUrl,
+            width: w,
+            height: h,
+            position: { x: (el.x || 0) + (el.width || 256) + 100, y: el.y || 0 },
+          })
+          addEdgeBetween(el.id, resultId)
+        }
+        imgEl.src = imgUrl
+      }
+    } catch (err) {
+      alert('放大失败: ' + formatErr(err))
+    } finally {
+      setLoading(false)
+    }
+  }
+
   // 图生视频：选中图片 → 生成视频 → 自动连线
   const handleImageToVideo = async (prompt, duration = 5) => {
     if (!selectedElement) return
@@ -334,6 +376,7 @@ export default function FreeCanvas() {
         onImageToImage={handleImageToImage}
         onImageToVideo={handleImageToVideo}
         onImageToPrompt={handleImageToPrompt}
+        onUpscale={handleUpscale}
         onRemove={() => removeNode(selectedId)}
         onBringToFront={() => bringToFront(selectedId)}
       />

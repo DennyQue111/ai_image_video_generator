@@ -3886,6 +3886,116 @@ class ComfyUIClient:
             timeout=timeout,
         )
 
+    def _build_seedvr2_upscale_workflow(
+        self,
+        resolution: int,
+        seed: int = 42,
+    ) -> Dict[str, Any]:
+        """构建 SeedVR2 图片超清放大工作流（API 格式）
+
+        基于 ComfyUI-SeedVR2_VideoUpscaler 节点包，对单张图片做扩散超分放大。
+        模型固定使用本地已下载的 7B Q3 量化版（适配 RTX 5070 12GB）。
+
+        VRAM 优化策略（12GB 显存）：
+        - DiT/VAE 均 offload 到 cpu，blocks_to_swap=24 分块搬运
+        - attention_mode=sdpa（不依赖 flash-attn/sageattention）
+        - batch_size=1（单图放大，最小化显存占用）
+
+        Args:
+            resolution: 目标短边像素（保持原宽高比，自动放大长边）
+            seed: 随机种子
+        """
+        return {
+            # 1. LoadImage（源图，由 upload_image 注入 filename）
+            "1": {
+                "class_type": "LoadImage",
+                "inputs": {"image": "seedvr2_input.png"},
+            },
+            # 2. SeedVR2 DiT 模型加载（7B Q3 量化，CPU offload + BlockSwap）
+            "2": {
+                "class_type": "SeedVR2LoadDiTModel",
+                "inputs": {
+                    "model": "seedvr2_ema_7b-Q3_K_M.gguf",
+                    "device": "cuda:0",
+                    "offload_device": "cpu",
+                    "blocks_to_swap": 24,
+                    "attention_mode": "sdpa",
+                },
+            },
+            # 3. SeedVR2 VAE 模型加载（开启分块编解码，防止大图 VAE 阶段显存爆炸）
+            "3": {
+                "class_type": "SeedVR2LoadVAEModel",
+                "inputs": {
+                    "model": "ema_vae_fp16.safetensors",
+                    "device": "cuda:0",
+                    "offload_device": "cpu",
+                    "encode_tiled": True,
+                    "encode_tile_size": 1024,
+                    "encode_tile_overlap": 128,
+                    "decode_tiled": True,
+                    "decode_tile_size": 1024,
+                    "decode_tile_overlap": 128,
+                },
+            },
+            # 4. SeedVR2 主放大节点（一站式：encode→upscale→decode→postprocess）
+            # max_resolution 设安全上限，防止极端长宽比导致单边过大
+            "4": {
+                "class_type": "SeedVR2VideoUpscaler",
+                "inputs": {
+                    "image": ["1", 0],
+                    "dit": ["2", 0],
+                    "vae": ["3", 0],
+                    "seed": seed,
+                    "resolution": resolution,
+                    "max_resolution": 2048,
+                    "batch_size": 1,
+                    "uniform_batch_size": False,
+                    "color_correction": "lab",
+                    "offload_device": "cpu",
+                },
+            },
+            # 5. 保存结果
+            "5": {
+                "class_type": "SaveImage",
+                "inputs": {
+                    "images": ["4", 0],
+                    "filename_prefix": "seedvr2_upscale",
+                },
+            },
+        }
+
+    async def generate_seedvr2_upscale_and_wait(
+        self,
+        source_image_url: str,
+        resolution: int,
+        seed: int = 42,
+        timeout: int = 600,
+    ) -> Dict[str, Any]:
+        """使用 SeedVR2 对单张图片进行超清放大
+
+        Args:
+            source_image_url: 源图片 URL（/static/projects/... 或完整 URL）
+            resolution: 目标短边像素（保持原宽高比）
+            seed: 随机种子
+            timeout: 超时时间（秒），默认 10 分钟
+
+        Returns:
+            ComfyUI 完成结果（含 images 列表）
+        """
+        logger.info("[ComfyUI] SeedVR2 upscale, resolution=%d, seed=%d", resolution, seed)
+
+        # 1. 上传源图到 ComfyUI
+        upload_result = await self.upload_image(source_image_url)
+        input_filename = upload_result["name"]
+        logger.info("[ComfyUI] SeedVR2 source uploaded: %s", input_filename)
+
+        # 2. 构建工作流并注入源图文件名
+        workflow = self._build_seedvr2_upscale_workflow(resolution=resolution, seed=seed)
+        workflow["1"]["inputs"]["image"] = input_filename
+
+        # 3. 提交并等待（复用图片轮询逻辑）
+        return await self._submit_and_wait(workflow, timeout, "SeedVR2 upscale")
+
 
 # 单例实例
 comfyui_client: Optional[ComfyUIClient] = None

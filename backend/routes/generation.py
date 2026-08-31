@@ -601,6 +601,134 @@ def _decode_data_url(data_url: str):
     raise ValueError("Not a data URL")
 
 
+# ============ 图片超清放大（SeedVR2） ============
+
+class UpscaleImageRequest(BaseModel):
+    image_url: str = Field(..., description="待放大的图片 URL（/static/projects/... 形式）")
+    ratio: int = Field(default=2, ge=2, le=4, description="放大倍数 2-4")
+    model: str = Field(default="comfyui-seedvr2", description="放大模型")
+
+
+def _read_image_size(data: bytes) -> tuple:
+    """零依赖解析图片字节流，返回 (width, height)。
+
+    支持 PNG / JPEG / WebP / GIF 常见格式。解析失败返回 (0, 0)。
+    用于放大接口计算目标分辨率（短边 × 倍数），避免引入 Pillow 依赖。
+    """
+    import struct
+    # PNG: 前 8 字节签名 \x89PNG，IHDR 在第 16-24 字节
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        w, h = struct.unpack(">II", data[16:24])
+        return w, h
+    # JPEG: 扫描 SOFx 标记段读取尺寸
+    if data[:2] == b"\xff\xd8":
+        i = 2
+        while i < len(data) - 9:
+            if data[i] != 0xFF:
+                i += 1
+                continue
+            marker = data[i + 1]
+            # SOF0~SOF3, SOF5~SOF7, SOF9~SOF11, SOF13~SOF15（不含 SOF4/SOF8/SOF12）
+            if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+                h, w = struct.unpack(">HH", data[i + 5:i + 9])
+                return w, h
+            seg_len = struct.unpack(">H", data[i + 2:i + 4])[0]
+            i += 2 + seg_len
+        return 0, 0
+    # WebP: RIFF....WEBP，VP8/VP8L/VP8X 段含尺寸
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        if data[12:16] in (b"VP8 ", b"VP8L"):
+            w = struct.unpack("<H", data[26:28])[0] & 0x3FFF
+            h = struct.unpack("<H", data[28:30])[0] & 0x3FFF
+            return w, h
+        if data[12:16] == b"VP8X":
+            w = struct.unpack("<I", data[24:27] + b"\x00")[0] + 1
+            h = struct.unpack("<I", data[27:30] + b"\x00")[0] + 1
+            return w, h
+        return 0, 0
+    # GIF: 6-10 字节为逻辑屏幕宽高（小端）
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        w, h = struct.unpack("<HH", data[6:10])
+        return w, h
+    return 0, 0
+
+
+@router.post("/api/upscale-image")
+async def upscale_image(request: UpscaleImageRequest):
+    """图片超清放大
+
+    使用 ComfyUI SeedVR2 工作流对单张图片进行超清放大。
+    根据原图短边 × 放大倍数计算目标分辨率（保持原宽高比）。
+    """
+    logger.info("[API] /api/upscale-image called, ratio=%s, model=%s", request.ratio, request.model)
+
+    comfyui = get_comfyui_client()
+    if not await comfyui.check_connection():
+        logger.error("[API] ComfyUI not running")
+        raise HTTPException(status_code=503, detail="ComfyUI 未运行，请先启动 ComfyUI")
+
+    # 1. 解析源图 URL 并读取真实尺寸，计算目标分辨率（短边像素）
+    full_url = _to_full_url(request.image_url)
+    try:
+        img_data, _, _ = _resolve_image_data(full_url)
+    except Exception as e:
+        logger.error("[API] upscale resolve image failed: %s", e)
+        raise HTTPException(status_code=400, detail=f"无法读取源图: {e}")
+
+    src_w, src_h = _read_image_size(img_data)
+    if src_w == 0 or src_h == 0:
+        # 尺寸解析失败时退回保守默认（短边 1080），避免阻断流程
+        resolution = 1080
+        logger.warning("[API] upscale image size parse failed, fallback resolution=%d", resolution)
+    else:
+        short_edge = min(src_w, src_h)
+        resolution = short_edge * request.ratio
+        # SeedVR2 要求偶数
+        resolution = max(16, resolution - (resolution % 2))
+        # 12GB 显存安全上限：目标短边不超过 1536。
+        # 实测 1882 短边（3344x1882≈629万像素）导致系统崩溃，
+        # 1536 短边对应约 422 万像素，配合 tiled VAE 在安全范围。
+        capped = False
+        if resolution > 1536:
+            resolution = 1536
+            capped = True
+            logger.warning("[API] upscale resolution capped to 1536 (src=%dx%d, ratio=%d wanted %d)",
+                           src_w, src_h, request.ratio, short_edge * request.ratio)
+        logger.info("[API] upscale src=%dx%d, ratio=%d, target resolution=%d%s",
+                    src_w, src_h, request.ratio, resolution, " (capped)" if capped else "")
+
+    task_folder = OUTPUT_DIR / "upscale"
+    try:
+        result = await comfyui.generate_seedvr2_upscale_and_wait(
+            source_image_url=full_url,
+            resolution=resolution,
+            seed=42,
+            timeout=600,
+        )
+        images = result.get("images", [])
+        if not images:
+            logger.error("[API] SeedVR2 returned no images")
+            raise HTTPException(status_code=500, detail="SeedVR2 未返回任何图片")
+
+        img = images[0]
+        comfyui_url = comfyui.get_image_url(
+            img["filename"], img.get("subfolder", ""), img.get("type", "output")
+        )
+        saved = _save_comfyui_image(comfyui_url, task_folder, "upscale")
+        logger.info("[API] upscale success, saved=%s", saved["local_path"])
+        return {
+            "success": True,
+            "model": request.model,
+            "images": [saved],
+        }
+    except TimeoutError as e:
+        logger.error("[API] upscale timeout: %s", e)
+        raise HTTPException(status_code=504, detail=str(e))
+    except Exception as e:
+        logger.error("[API] upscale failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"放大失败: {str(e)}")
+
+
 @router.post("/api/gemini-inpaint")
 async def gemini_inpaint(request: InpaintRequest):
     """Gemini 图像修复：base image + mask + prompt → new image"""

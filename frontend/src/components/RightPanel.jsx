@@ -15,10 +15,12 @@ export default function RightPanel({
   onImageToImage,
   onImageToVideo,
   onImageToPrompt,
+  onUpscale,
   onRemove,
   onBringToFront,
 }) {
   const [activeTab, setActiveTab] = useState('i2i')
+  const [i2iSubTab, setI2iSubTab] = useState('preset') // 图生图子页签：preset 预设 / upscale 放大
   const [i2iPrompt, setI2iPrompt] = useState('')
   const [i2iModel, setI2iModel] = useState('gemini-2.5-flash-image')
   const [i2iWidth, setI2iWidth] = useState(1024) // 图生图输出宽（像素 px）
@@ -26,6 +28,9 @@ export default function RightPanel({
   const [i2vPrompt, setI2vPrompt] = useState('')
   const [i2vDuration, setI2vDuration] = useState(5) // 视频时长（秒），范围 2-15
   const [analyzedPrompt, setAnalyzedPrompt] = useState('')
+
+  // 放大子页签：放大倍数
+  const [upscaleRatio, setUpscaleRatio] = useState(2)
 
   const multiCount = selectedElements.length
 
@@ -99,6 +104,22 @@ export default function RightPanel({
       {/* 图生图 Tab */}
       {activeTab === 'i2i' && (
         <div>
+          {/* 子页签切换：预设 / 放大 */}
+          <div className="right-panel-subtabs">
+            <div
+              className={`right-panel-subtab ${i2iSubTab === 'preset' ? 'active' : ''}`}
+              onClick={() => setI2iSubTab('preset')}
+            >
+              预设
+            </div>
+            <div
+              className={`right-panel-subtab ${i2iSubTab === 'upscale' ? 'active' : ''}`}
+              onClick={() => setI2iSubTab('upscale')}
+            >
+              放大
+            </div>
+          </div>
+
           {/* 选中数量提示 */}
           <div style={{
             padding: '6px 10px',
@@ -114,6 +135,8 @@ export default function RightPanel({
               : '已选 1 张图 · 单图编辑模式'}
           </div>
 
+          {i2iSubTab === 'preset' && (
+            <>
           <div className="panel-label">模型</div>
           <select
             className="canvas-input"
@@ -202,6 +225,69 @@ export default function RightPanel({
           >
             <Sparkles size={16} /> {loading ? '生成中...' : (multiCount > 1 ? `多图融合（${multiCount} 张）` : '图生图')}
           </button>
+            </>
+          )}
+
+          {/* 放大子页签：选中单图 → 一键超清放大 */}
+          {i2iSubTab === 'upscale' && (
+            <div>
+              <div style={{
+                padding: '8px 10px',
+                borderRadius: 6,
+                fontSize: 12,
+                background: 'rgba(45,45,74,0.4)',
+                color: '#aaa',
+                border: '1px solid #2a2a4a',
+                marginBottom: 8,
+                lineHeight: 1.6,
+              }}>
+                使用 SeedVR2 对当前选中图片进行超清放大，保留原始结构细节。
+              </div>
+
+              <div className="panel-label">放大倍数</div>
+              <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+                {[2, 3, 4].map((r) => (
+                  <button
+                    key={r}
+                    style={{
+                      flex: 1,
+                      padding: '8px 4px',
+                      background: upscaleRatio === r ? '#3b82f6' : '#0d0d1a',
+                      color: upscaleRatio === r ? '#fff' : '#aaa',
+                      border: `1px solid ${upscaleRatio === r ? '#3b82f6' : '#2a2a4a'}`,
+                      borderRadius: 6,
+                      cursor: 'pointer',
+                      fontSize: 13,
+                      fontWeight: 600,
+                      transition: 'all 0.15s',
+                    }}
+                    onClick={() => setUpscaleRatio(r)}
+                  >
+                    {r}×
+                  </button>
+                ))}
+              </div>
+
+              {multiCount > 1 && (
+                <div style={{ color: '#f59e0b', fontSize: 11, marginTop: 8 }}>
+                  放大仅支持单图，请只选中一张图片。
+                </div>
+              )}
+
+              <div style={{ color: '#666', fontSize: 11, marginTop: 8, lineHeight: 1.5 }}>
+                倍数越高越吃显存，12GB 建议 2×。大图（短边超过 768）会被自动限制到安全分辨率以防崩溃。放大后结果作为新节点连到原图。
+              </div>
+
+              <button
+                className="canvas-btn canvas-btn-success"
+                style={{ width: '100%', marginTop: 8, justifyContent: 'center' }}
+                disabled={loading || multiCount > 1}
+                onClick={() => onUpscale && onUpscale(upscaleRatio)}
+              >
+                {loading ? '放大中...' : '一键超清放大'}
+              </button>
+            </div>
+          )}
         </div>
       )}
 
