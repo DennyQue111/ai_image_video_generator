@@ -334,6 +334,21 @@ export default function RightPanel({
       {/* 图生视频 Tab */}
       {activeTab === 'i2v' && (
         <div>
+          {/* 选中数量提示 */}
+          <div style={{
+            padding: '6px 10px',
+            borderRadius: 6,
+            fontSize: 12,
+            background: multiCount > 1 ? 'rgba(59,130,246,0.15)' : 'rgba(45,45,74,0.4)',
+            color: multiCount > 1 ? '#60a5fa' : '#888',
+            border: `1px solid ${multiCount > 1 ? '#3b82f6' : '#2a2a4a'}`,
+            marginBottom: 8,
+          }}>
+            {multiCount > 1
+              ? `已选 ${multiCount} 张图 · 多参考图模式（最多 9 张）`
+              : '已选 1 张图 · 单图生视频'}
+          </div>
+
           <div className="panel-label">提示词（可选）</div>
           <textarea
             className="canvas-textarea"
@@ -382,7 +397,7 @@ export default function RightPanel({
             disabled={loading}
             onClick={() => onImageToVideo(i2vPrompt, i2vDuration)}
           >
-            <Video size={16} /> {loading ? '生成中...' : '图生视频'}
+            <Video size={16} /> {loading ? '生成中...' : (multiCount > 1 ? `多图生视频（${multiCount} 张）` : '图生视频')}
           </button>
         </div>
       )}

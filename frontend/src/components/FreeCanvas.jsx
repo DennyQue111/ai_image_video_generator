@@ -308,7 +308,12 @@ export default function FreeCanvas() {
 
   // 图生视频：选中图片 → 生成视频 → 自动连线
   const handleImageToVideo = async (prompt, duration = 5) => {
-    if (!selectedElement) return
+    const imgs = selectedElements.length > 0 ? selectedElements : selectedElement ? [selectedElement] : []
+    if (imgs.length === 0) return
+    if (imgs.length > 9) {
+      alert('最多支持 9 张参考图，请减少选中数量')
+      return
+    }
     // 12GB 显存软警告：>8s 容易 OOM
     if (duration > 8 && !confirm(`视频时长 ${duration}s 在 12GB 显存上可能 OOM，是否继续？`)) {
       return
@@ -317,25 +322,24 @@ export default function FreeCanvas() {
     try {
       const res = await axios.post('/api/image-to-video', {
         model: 'comfyui-minimax',
-        reference_images: [selectedElement.src],
+        reference_images: imgs.map((el) => el.src),
         duration,
         prompt: prompt || '',
       })
       if (res.data.success && res.data.videos?.[0]) {
         const vid = res.data.videos[0]
         const vidUrl = vid.url || vid.local_url
-        // 视频节点放在源图右侧 + 自动连线
+        // 视频节点放在所有源图最右侧 + 从每个源图连线到结果
+        const maxX = Math.max(...imgs.map((el) => (el.x || 0) + (el.width || 256)))
+        const minY = Math.min(...imgs.map((el) => el.y || 0))
         const resultId = addNode({
           src: vidUrl,
           width: 320,
           height: 180,
           mediaType: 'video',
-          position: {
-            x: selectedElement.x + selectedElement.width + 100,
-            y: selectedElement.y,
-          },
+          position: { x: maxX + 100, y: minY },
         })
-        addEdgeBetween(selectedId, resultId)
+        imgs.forEach((el) => addEdgeBetween(el.id, resultId))
       } else {
         alert('图生视频失败：未返回视频')
       }
