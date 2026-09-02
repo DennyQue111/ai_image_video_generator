@@ -240,6 +240,72 @@ export default function FreeCanvas() {
     }
   }
 
+  // 图片分割：选中单图 → 按上下左右各平均切成 4 块 → 上传后端 → 4 个新节点连线到原图
+  const handleSplit = async () => {
+    const el = selectedElement
+    if (!el) return
+    setLoading(true)
+    try {
+      const imgEl = new window.Image()
+      imgEl.crossOrigin = 'anonymous'
+      await new Promise((resolve, reject) => {
+        imgEl.onload = resolve
+        imgEl.onerror = () => reject(new Error('图片加载失败，无法分割'))
+        imgEl.src = el.src
+      })
+      const w = imgEl.naturalWidth
+      const h = imgEl.naturalHeight
+      const halfW = Math.floor(w / 2)
+      const halfH = Math.floor(h / 2)
+      const regions = [
+        { sx: 0,     sy: 0 },
+        { sx: halfW, sy: 0 },
+        { sx: 0,     sy: halfH },
+        { sx: halfW, sy: halfH },
+      ]
+      const baseX = (el.x || 0) + (el.width || 256) + 80
+      const baseY = el.y || 0
+      const thumbMax = 200
+
+      for (let i = 0; i < regions.length; i++) {
+        const r = regions[i]
+        const canvas = document.createElement('canvas')
+        canvas.width = halfW
+        canvas.height = halfH
+        const ctx = canvas.getContext('2d')
+        ctx.drawImage(imgEl, r.sx, r.sy, halfW, halfH, 0, 0, halfW, halfH)
+
+        // 转 blob → 上传后端 → 拿到 /static/... URL
+        const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'))
+        const formData = new FormData()
+        formData.append('file', blob, `split_${i}.png`)
+        const res = await axios.post('/api/upload-image', formData)
+        const imgUrl = res.data.url
+
+        // 缩略图尺寸
+        let tw = halfW, th = halfH
+        if (tw > thumbMax || th > thumbMax) {
+          const ratio = Math.min(thumbMax / tw, thumbMax / th)
+          tw = Math.round(tw * ratio)
+          th = Math.round(th * ratio)
+        }
+        const col = i % 2
+        const row = Math.floor(i / 2)
+        const resultId = addNode({
+          src: imgUrl,
+          width: tw,
+          height: th,
+          position: { x: baseX + col * (thumbMax + 20), y: baseY + row * (thumbMax + 20) },
+        })
+        addEdgeBetween(el.id, resultId)
+      }
+    } catch (err) {
+      alert('分割失败: ' + formatErr(err))
+    } finally {
+      setLoading(false)
+    }
+  }
+
   // 图生视频：选中图片 → 生成视频 → 自动连线
   const handleImageToVideo = async (prompt, duration = 5) => {
     if (!selectedElement) return
@@ -377,6 +443,7 @@ export default function FreeCanvas() {
         onImageToVideo={handleImageToVideo}
         onImageToPrompt={handleImageToPrompt}
         onUpscale={handleUpscale}
+        onSplit={handleSplit}
         onRemove={() => removeNode(selectedId)}
         onBringToFront={() => bringToFront(selectedId)}
       />

@@ -16,11 +16,12 @@ export default function RightPanel({
   onImageToVideo,
   onImageToPrompt,
   onUpscale,
+  onSplit,
   onRemove,
   onBringToFront,
 }) {
   const [activeTab, setActiveTab] = useState('i2i')
-  const [i2iSubTab, setI2iSubTab] = useState('preset') // 图生图子页签：preset 预设 / upscale 放大
+  const [i2iSubTab, setI2iSubTab] = useState('preset') // 图生图子页签：preset 预设 / upscale 放大 / split 分割
   const [i2iPrompt, setI2iPrompt] = useState('')
   const [i2iModel, setI2iModel] = useState('gemini-2.5-flash-image')
   const [i2iWidth, setI2iWidth] = useState(1024) // 图生图输出宽（像素 px）
@@ -117,6 +118,12 @@ export default function RightPanel({
               onClick={() => setI2iSubTab('upscale')}
             >
               放大
+            </div>
+            <div
+              className={`right-panel-subtab ${i2iSubTab === 'split' ? 'active' : ''}`}
+              onClick={() => setI2iSubTab('split')}
+            >
+              分割
             </div>
           </div>
 
@@ -285,6 +292,39 @@ export default function RightPanel({
                 onClick={() => onUpscale && onUpscale(upscaleRatio)}
               >
                 {loading ? '放大中...' : '一键超清放大'}
+              </button>
+            </div>
+          )}
+
+          {/* 分割子页签：选中单图 → 1分4 → 4 块自动连线到原图 */}
+          {i2iSubTab === 'split' && (
+            <div>
+              <div style={{
+                padding: '8px 10px',
+                borderRadius: 6,
+                fontSize: 12,
+                background: 'rgba(45,45,74,0.4)',
+                color: '#aaa',
+                border: '1px solid #2a2a4a',
+                marginBottom: 8,
+                lineHeight: 1.6,
+              }}>
+                将当前图片按 2×2 网格平均切成 4 块，每块作为独立节点。适用于 HDR 场景图分块后再逐块放大。
+              </div>
+
+              {multiCount > 1 && (
+                <div style={{ color: '#f59e0b', fontSize: 11, marginTop: 8 }}>
+                  分割仅支持单图，请只选中一张图片。
+                </div>
+              )}
+
+              <button
+                className="canvas-btn canvas-btn-primary"
+                style={{ width: '100%', marginTop: 8, justifyContent: 'center' }}
+                disabled={loading || multiCount > 1}
+                onClick={() => onSplit && onSplit()}
+              >
+                1分4
               </button>
             </div>
           )}
