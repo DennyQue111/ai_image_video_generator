@@ -813,6 +813,106 @@ async def gemini_image_to_prompt(request: ImageToPromptRequest):
         raise HTTPException(status_code=500, detail=f"图片分析失败: {str(e)}")
 
 
+# ============ Midjourney 概念图细化 (Refine) ============
+
+class RefineAnalyzeRequest(BaseModel):
+    image: str = Field(..., description="待细化的概念图 URL（/static/projects/... 形式）")
+
+
+class RefineGenerateRequest(BaseModel):
+    image: str = Field(..., description="源图 URL（/static/projects/... 形式）")
+    prompt: str = Field(..., description="用户确认/编辑后的细化提示词")
+
+
+@router.post("/api/refine-analyze")
+async def refine_analyze(request: RefineAnalyzeRequest):
+    """第一步：用 Qwen3-VL 8B 分析概念图，返回细化提示词（不生图）"""
+    logger.info("[API] /api/refine-analyze called")
+
+    raw_url = request.image.split("?")[0]
+    if "/static/projects/" not in raw_url:
+        raise HTTPException(status_code=400, detail="请上传图片（仅支持本地上传的图片）")
+
+    relative = raw_url.split("/static/projects/", 1)[1]
+    image_path = Path(PROJECT_FILE_PATH) / relative
+    if not image_path.exists():
+        raise HTTPException(status_code=404, detail=f"图片文件不存在: {image_path}")
+
+    llm_service = LLMVisionService()
+    if not llm_service.is_available():
+        raise HTTPException(
+            status_code=503,
+            detail="LLM 视觉模型未就绪。请确认 Ollama 已运行并下载模型：ollama pull qwen3-vl:8b"
+        )
+
+    try:
+        logger.info("[API] refine-analyze: 正在用 LLM 分析概念图...")
+        refine_prompt = await llm_service.analyze_midjourney_refine(
+            image_path=str(image_path),
+        )
+        logger.info("[API] refine-analyze: LLM 生成提示词: %s...", refine_prompt[:200])
+        return {"success": True, "prompt": refine_prompt}
+    except Exception as e:
+        logger.error("[API] refine-analyze: LLM 分析失败: %s", e)
+        raise HTTPException(status_code=500, detail=f"概念图分析失败: {str(e)}")
+
+
+@router.post("/api/refine-generate")
+async def refine_generate(request: RefineGenerateRequest):
+    """第二步：用 Flux.2 Klein 9B 图生图，根据用户确认的提示词细化"""
+    logger.info("[API] /api/refine-generate called, prompt=%s...", request.prompt[:100])
+
+    # 读取原图尺寸（保持分辨率一致）
+    raw_url = request.image.split("?")[0]
+    img_data, _, _ = _resolve_image_data(raw_url)
+    src_w, src_h = _read_image_size(img_data)
+    if src_w == 0 or src_h == 0:
+        src_w, src_h = 1024, 1024
+        logger.warning("[API] refine-generate: 尺寸解析失败，回退到 1024x1024")
+    src_w = max(16, src_w - (src_w % 16))
+    src_h = max(16, src_h - (src_h % 16))
+    logger.info("[API] refine-generate: 源图尺寸 %dx%d (对齐 16)", src_w, src_h)
+
+    comfyui = get_comfyui_client()
+    if not await comfyui.check_connection():
+        raise HTTPException(status_code=503, detail="ComfyUI 未运行，请先启动 ComfyUI")
+
+    source_image_url = _to_full_url(request.image)
+    task_folder = OUTPUT_DIR / "refine"
+
+    try:
+        logger.info("[API] refine-generate: 调用 Flux.2 Klein 9B 图生图细化...")
+        result = await comfyui.generate_flux2_scene_hdr_and_wait(
+            source_image_url=source_image_url,
+            edit_prompt=request.prompt,
+            negative_prompt="",
+            steps=8,
+            cfg=4.0,
+            seed=-1,
+            width=src_w,
+            height=src_h,
+            denoise=0.4,
+            timeout=600,
+        )
+        images = result.get("images", [])
+        if not images:
+            raise HTTPException(status_code=500, detail="ComfyUI 未返回任何图片")
+
+        img = images[0]
+        comfyui_url = comfyui.get_image_url(
+            img["filename"], img.get("subfolder", ""), img.get("type", "output")
+        )
+        saved = _save_comfyui_image(comfyui_url, task_folder, "refine")
+        logger.info("[API] refine-generate: 细化成功, saved=%s", saved["local_path"])
+        return {"success": True, "model": "flux2-klein-refine", "images": [saved]}
+    except TimeoutError as e:
+        logger.error("[API] refine-generate: 超时: %s", e)
+        raise HTTPException(status_code=504, detail=str(e))
+    except Exception as e:
+        logger.error("[API] refine-generate: 失败: %s", e)
+        raise HTTPException(status_code=500, detail=f"细化失败: {str(e)}")
+
+
 # ============ 场景图 HDR 生成 (Scene HDR) ============
 
 @router.post("/api/scene-hdr")

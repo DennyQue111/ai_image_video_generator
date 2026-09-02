@@ -240,6 +240,64 @@ export default function FreeCanvas() {
     }
   }
 
+  // 细化第一步：Qwen3-VL 分析图片 → 返回提示词（不生图）
+  const handleRefineAnalyze = async () => {
+    const el = selectedElement
+    if (!el) return null
+    setLoading(true)
+    try {
+      const res = await axios.post('/api/refine-analyze', { image: el.src })
+      if (res.data.success) {
+        return res.data.prompt
+      }
+    } catch (err) {
+      alert('分析失败: ' + formatErr(err))
+    } finally {
+      setLoading(false)
+    }
+    return null
+  }
+
+  // 细化第二步：用户确认提示词 → Flux.2 生图 → 结果连线到原图
+  const handleRefineGenerate = async (prompt) => {
+    const el = selectedElement
+    if (!el) return
+    setLoading(true)
+    try {
+      const res = await axios.post('/api/refine-generate', { image: el.src, prompt })
+      if (res.data.success && res.data.images?.[0]) {
+        const img = res.data.images[0]
+        const imgUrl = img.url || img.local_url
+        const imgEl = new window.Image()
+        imgEl.crossOrigin = 'anonymous'
+        imgEl.onload = () => {
+          const maxSize = 320
+          let w = imgEl.width || el.width
+          let h = imgEl.height || el.height
+          if (w > maxSize || h > maxSize) {
+            const r = Math.min(maxSize / w, maxSize / h)
+            w = Math.round(w * r)
+            h = Math.round(h * r)
+          }
+          const resultId = addNode({
+            src: imgUrl,
+            width: w,
+            height: h,
+            position: { x: (el.x || 0) + (el.width || 256) + 100, y: el.y || 0 },
+          })
+          addEdgeBetween(el.id, resultId)
+        }
+        imgEl.src = imgUrl
+      } else {
+        alert('细化失败：未返回图片')
+      }
+    } catch (err) {
+      alert('细化失败: ' + formatErr(err))
+    } finally {
+      setLoading(false)
+    }
+  }
+
   // 图片分割：选中单图 → 按上下左右各平均切成 4 块 → 上传后端 → 4 个新节点连线到原图
   const handleSplit = async () => {
     const el = selectedElement
@@ -448,6 +506,8 @@ export default function FreeCanvas() {
         onImageToPrompt={handleImageToPrompt}
         onUpscale={handleUpscale}
         onSplit={handleSplit}
+        onRefineAnalyze={handleRefineAnalyze}
+        onRefineGenerate={handleRefineGenerate}
         onRemove={() => removeNode(selectedId)}
         onBringToFront={() => bringToFront(selectedId)}
       />

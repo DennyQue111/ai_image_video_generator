@@ -17,11 +17,13 @@ export default function RightPanel({
   onImageToPrompt,
   onUpscale,
   onSplit,
+  onRefineAnalyze,
+  onRefineGenerate,
   onRemove,
   onBringToFront,
 }) {
   const [activeTab, setActiveTab] = useState('i2i')
-  const [i2iSubTab, setI2iSubTab] = useState('preset') // 图生图子页签：preset 预设 / upscale 放大 / split 分割
+  const [i2iSubTab, setI2iSubTab] = useState('preset') // 图生图子页签：preset / upscale / split / refine
   const [i2iPrompt, setI2iPrompt] = useState('')
   const [i2iModel, setI2iModel] = useState('gemini-2.5-flash-image')
   const [i2iWidth, setI2iWidth] = useState(1024) // 图生图输出宽（像素 px）
@@ -32,6 +34,8 @@ export default function RightPanel({
 
   // 放大子页签：放大倍数
   const [upscaleRatio, setUpscaleRatio] = useState(2)
+  // 细化子页签：LLM 生成的提示词（null=未生成，字符串=已生成可编辑）
+  const [refinePrompt, setRefinePrompt] = useState(null)
 
   const multiCount = selectedElements.length
 
@@ -124,6 +128,12 @@ export default function RightPanel({
               onClick={() => setI2iSubTab('split')}
             >
               分割
+            </div>
+            <div
+              className={`right-panel-subtab ${i2iSubTab === 'refine' ? 'active' : ''}`}
+              onClick={() => setI2iSubTab('refine')}
+            >
+              细化
             </div>
           </div>
 
@@ -326,6 +336,52 @@ export default function RightPanel({
               >
                 1分4
               </button>
+            </div>
+          )}
+
+          {/* 细化子页签：第一步 Qwen3-VL 分析 → 第二步 用户编辑提示词 → Flux.2 生图 */}
+          {i2iSubTab === 'refine' && (
+            <div>
+              {multiCount > 1 && (
+                <div style={{ color: '#f59e0b', fontSize: 11, marginBottom: 8 }}>
+                  细化仅支持单图，请只选中一张图片。
+                </div>
+              )}
+
+              {/* 第一步：生成提示词 */}
+              <button
+                className="canvas-btn canvas-btn-primary"
+                style={{ width: '100%', justifyContent: 'center' }}
+                disabled={loading || multiCount > 1}
+                onClick={async () => {
+                  const prompt = await onRefineAnalyze()
+                  if (prompt) setRefinePrompt(prompt)
+                }}
+              >
+                {loading ? '分析中...' : '生成细化提示词'}
+              </button>
+
+              {/* 第二步：可编辑提示词 + 提交生图 */}
+              {refinePrompt !== null && (
+                <>
+                  <div className="panel-label" style={{ marginTop: 8 }}>细化提示词（可编辑）</div>
+                  <textarea
+                    className="canvas-textarea"
+                    value={refinePrompt}
+                    onChange={(e) => setRefinePrompt(e.target.value)}
+                    rows={6}
+                    style={{ marginTop: 4, fontSize: 12 }}
+                  />
+                  <button
+                    className="canvas-btn canvas-btn-success"
+                    style={{ width: '100%', marginTop: 6, justifyContent: 'center' }}
+                    disabled={loading || !refinePrompt.trim()}
+                    onClick={() => onRefineGenerate && onRefineGenerate(refinePrompt)}
+                  >
+                    {loading ? '生成中...' : '提交 Flux 细化'}
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>

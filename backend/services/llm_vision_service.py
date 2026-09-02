@@ -214,6 +214,34 @@ class LLMVisionService:
         logger.info("[LLM] 场景图 HDR 提示词生成完成: %s...", result[:200])
         return result
 
+    async def analyze_midjourney_refine(self, image_path: str) -> str:
+        """
+        分析 Midjourney 概念图，生成细化提示词
+
+        从 backend/skills/midjourney_refine.md 加载 skill 作为系统提示词。
+        识别图片中模糊/扭曲的部分，生成用于 Flux.2 图生图的英文细化提示词。
+
+        Args:
+            image_path: 概念图本地路径
+
+        Returns:
+            用于 Flux.2 img2img 的英文细化提示词
+        """
+        system_prompt = self._load_skill("midjourney_refine")
+        if not system_prompt:
+            system_prompt = (
+                "你是一位专业的 AI 图像提示词工程师。"
+                "分析用户上传的 Midjourney 概念图，识别其中模糊、扭曲或不清晰的部分，"
+                "生成一段详细的英文提示词描述图片应该呈现的样子。"
+                "只输出英文提示词，100-200 词。"
+            )
+            logger.warning("[LLM] midjourney_refine skill 加载失败，使用 fallback")
+
+        user_text = "请分析这张 Midjourney 概念图，识别模糊或扭曲的部分，生成用于 Flux 图生图的细化提示词。"
+        result = await self._call_llm(system_prompt, user_text, image_path)
+        logger.info("[LLM] Midjourney 细化提示词生成完成: %s...", result[:200])
+        return result
+
     async def analyze_image(self, image_path: str, instruction: str = "描述这张图片的内容") -> str:
         """
         通用图片分析（供后续其他子页签复用）
