@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Sparkles, Video, ScanText, Trash2, Copy, ArrowUp } from 'lucide-react'
 
 /**
@@ -36,6 +36,28 @@ export default function RightPanel({
   const [upscaleRatio, setUpscaleRatio] = useState(2)
   // 细化子页签：LLM 生成的提示词（null=未生成，字符串=已生成可编辑）
   const [refinePrompt, setRefinePrompt] = useState(null)
+
+  // 源文件真实分辨率
+  const [naturalSize, setNaturalSize] = useState(null)
+
+  useEffect(() => {
+    setNaturalSize(null)
+    if (!selectedElement?.src) return
+    if (selectedElement.type === 'video') {
+      const v = document.createElement('video')
+      v.preload = 'metadata'
+      v.onloadedmetadata = () => {
+        setNaturalSize({ w: v.videoWidth, h: v.videoHeight })
+      }
+      v.src = selectedElement.src
+    } else {
+      const img = new window.Image()
+      img.onload = () => {
+        setNaturalSize({ w: img.naturalWidth, h: img.naturalHeight })
+      }
+      img.src = selectedElement.src
+    }
+  }, [selectedElement?.src])
 
   const multiCount = selectedElements.length
 
@@ -82,6 +104,9 @@ export default function RightPanel({
             alt="selected"
           />
         )}
+        <div style={{ fontSize: 11, color: '#777', marginTop: 4, textAlign: 'center' }}>
+          {naturalSize ? `${naturalSize.w} × ${naturalSize.h}` : '加载中...'}
+        </div>
       </div>
 
       {/* Tab 切换 */}
