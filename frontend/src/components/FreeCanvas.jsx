@@ -364,6 +364,27 @@ export default function FreeCanvas() {
     }
   }
 
+  // Qwen3 生成视频提示词：选中图片 + 用户基本需求 → 返回完整提示词
+  const handleGenerateVideoPrompt = async (instruction) => {
+    const el = selectedElement
+    if (!el) return null
+    setLoading(true)
+    try {
+      const res = await axios.post('/api/generate-video-prompt', {
+        image: el.src,
+        instruction: instruction || '',
+      })
+      if (res.data.success) {
+        return res.data.prompt
+      }
+    } catch (err) {
+      alert('生成提示词失败: ' + formatErr(err))
+    } finally {
+      setLoading(false)
+    }
+    return null
+  }
+
   // 图生视频：选中图片 → 生成视频 → 自动连线
   const handleImageToVideo = async (prompt, duration = 5) => {
     const imgs = selectedElements.length > 0 ? selectedElements : selectedElement ? [selectedElement] : []
@@ -503,6 +524,7 @@ export default function FreeCanvas() {
         loading={loading}
         onImageToImage={handleImageToImage}
         onImageToVideo={handleImageToVideo}
+        onGenerateVideoPrompt={handleGenerateVideoPrompt}
         onImageToPrompt={handleImageToPrompt}
         onUpscale={handleUpscale}
         onSplit={handleSplit}

@@ -14,6 +14,7 @@ export default function RightPanel({
   loading,
   onImageToImage,
   onImageToVideo,
+  onGenerateVideoPrompt,
   onImageToPrompt,
   onUpscale,
   onSplit,
@@ -439,6 +440,17 @@ export default function RightPanel({
             rows={3}
             style={{ marginTop: 4 }}
           />
+          <button
+            className="canvas-btn"
+            style={{ width: '100%', marginTop: 4, justifyContent: 'center', fontSize: 12, background: '#1a1a2e', color: '#fff', border: '1px solid #3a3a5a' }}
+            disabled={loading || !selectedElement}
+            onClick={async () => {
+              const prompt = await onGenerateVideoPrompt(i2vPrompt)
+              if (prompt) setI2vPrompt(prompt)
+            }}
+          >
+            {loading ? '生成中...' : 'Qwen3 生成提示词'}
+          </button>
 
           <div className="panel-label" style={{ marginTop: 10 }}>视频时长（秒）</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>

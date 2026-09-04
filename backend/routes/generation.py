@@ -88,6 +88,11 @@ class SceneHDRRequest(BaseModel):
     model: str = "qwen-image-edit"  # qwen-image-edit | flux2-klein
 
 
+class VideoPromptRequest(BaseModel):
+    image: str = Field(..., description="参考图片 URL（/static/projects/... 形式）")
+    instruction: str = Field("", description="用户对视频的基本要求")
+
+
 # ============ 辅助函数 ============
 
 def _to_full_url(url: str) -> str:
@@ -822,6 +827,45 @@ class RefineAnalyzeRequest(BaseModel):
 class RefineGenerateRequest(BaseModel):
     image: str = Field(..., description="源图 URL（/static/projects/... 形式）")
     prompt: str = Field(..., description="用户确认/编辑后的细化提示词")
+
+
+# ============ 视频提示词生成 (Video Prompt) ============
+
+@router.post("/api/generate-video-prompt")
+async def generate_video_prompt(request: VideoPromptRequest):
+    """用 Qwen3-VL 8B 分析参考图片 + 用户需求，生成 MiniMax H3 视频提示词"""
+    logger.info("[API] /api/generate-video-prompt called, instruction=%s", request.instruction[:100])
+
+    raw_url = request.image.split("?")[0]
+    if "/static/projects/" not in raw_url:
+        raise HTTPException(status_code=400, detail="请上传图片（仅支持本地上传的图片）")
+
+    relative = raw_url.split("/static/projects/", 1)[1]
+    image_path = Path(PROJECT_FILE_PATH) / relative
+    if not image_path.exists():
+        raise HTTPException(status_code=404, detail=f"图片文件不存在: {image_path}")
+
+    llm_service = LLMVisionService()
+    if not llm_service.is_available():
+        raise HTTPException(
+            status_code=503,
+            detail="LLM 视觉模型未就绪。请确认 Ollama 已运行并下载模型：ollama pull qwen3-vl:8b"
+        )
+
+    try:
+        logger.info("[API] generate-video-prompt: 正在用 LLM 生成视频提示词...")
+        prompt = await llm_service.generate_video_prompt(
+            image_path=str(image_path),
+            user_instruction=request.instruction,
+        )
+        logger.info("[API] generate-video-prompt: 生成完成: %s...", prompt[:200])
+        return {"success": True, "prompt": prompt}
+    except Exception as e:
+        logger.error("[API] generate-video-prompt: 失败: %s", e)
+        raise HTTPException(status_code=500, detail=f"视频提示词生成失败: {str(e)}")
+
+
+# ============ Midjourney 概念图细化路由 ============
 
 
 @router.post("/api/refine-analyze")

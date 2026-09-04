@@ -242,6 +242,34 @@ class LLMVisionService:
         logger.info("[LLM] Midjourney 细化提示词生成完成: %s...", result[:200])
         return result
 
+    async def generate_video_prompt(self, image_path: str, user_instruction: str) -> str:
+        """
+        根据用户的基本需求和参考图片，生成 MiniMax H3 视频提示词
+
+        从 backend/skills/video_prompt.md 加载 skill 作为系统提示词。
+        Qwen3-VL 读取图片内容，结合用户的文字需求，生成完整的视频提示词。
+
+        Args:
+            image_path: 参考图片本地路径
+            user_instruction: 用户对视频的基本要求（如"人物沿道路行走，5秒"）
+
+        Returns:
+            可直接用于 MiniMax H3 的视频提示词
+        """
+        system_prompt = self._load_skill("video_prompt")
+        if not system_prompt:
+            system_prompt = (
+                "你是一位专业的 AI 视频提示词工程师。"
+                "根据用户的需求和参考图片，生成可用于 MiniMax H3 的视频提示词。"
+                "包含画面内容、焦距、运镜、动作、声音设计。输出纯中文自然语言。"
+            )
+            logger.warning("[LLM] video_prompt skill 加载失败，使用 fallback")
+
+        user_text = f"请根据这张参考图片和以下需求，生成一段完整的 MiniMax H3 视频提示词：\n{user_instruction}"
+        result = await self._call_llm(system_prompt, user_text, image_path)
+        logger.info("[LLM] 视频提示词生成完成: %s...", result[:200])
+        return result
+
     async def analyze_image(self, image_path: str, instruction: str = "描述这张图片的内容") -> str:
         """
         通用图片分析（供后续其他子页签复用）
