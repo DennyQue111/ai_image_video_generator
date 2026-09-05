@@ -6,6 +6,8 @@
 import logging
 import uuid
 import shutil
+import subprocess
+import sys
 import requests
 from pathlib import Path
 from typing import List
@@ -591,6 +593,39 @@ async def image_to_video(request: ImageToVideoRequest):
     except Exception as e:
         logger.error("[API] image-to-video failed: %s", e)
         raise HTTPException(status_code=500, detail=f"视频生成失败: {str(e)}")
+
+
+# ============ 打开文件所在文件夹 ============
+
+class OpenFolderRequest(BaseModel):
+    url: str = Field(..., description="图片/视频 URL（/static/projects/... 形式）")
+
+
+@router.post("/api/open-in-folder")
+async def open_in_folder(request: OpenFolderRequest):
+    """在系统文件管理器中打开文件所在文件夹并选中文件"""
+    raw_url = request.url.split("?")[0]
+    if "/static/projects/" not in raw_url:
+        raise HTTPException(status_code=400, detail="仅支持本地上传的文件")
+
+    relative = raw_url.split("/static/projects/", 1)[1]
+    file_path = Path(PROJECT_FILE_PATH) / relative
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"文件不存在: {file_path}")
+
+    try:
+        if sys.platform == "win32":
+            # explorer /select,"C:\path\to\file.png" 打开文件夹并选中文件
+            subprocess.Popen(['explorer', '/select,', str(file_path)])
+        elif sys.platform == "darwin":
+            subprocess.Popen(['open', '-R', str(file_path)])
+        else:
+            subprocess.Popen(['xdg-open', str(file_path.parent)])
+        logger.info("[API] open-in-folder: %s", file_path)
+        return {"success": True}
+    except Exception as e:
+        logger.error("[API] open-in-folder failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"打开文件夹失败: {str(e)}")
 
 
 # ============ Gemini 图像修复 (Inpainting) ============

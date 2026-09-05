@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
-import { Sparkles, Video, ScanText, Trash2, Copy, ArrowUp } from 'lucide-react'
+import { Sparkles, Video, ScanText, Trash2, Copy, ArrowUp, FolderOpen } from 'lucide-react'
+import axios from 'axios'
 
 /**
  * 右侧属性面板
@@ -110,6 +111,21 @@ export default function RightPanel({
         <div style={{ fontSize: 11, color: '#777', marginTop: 4, textAlign: 'center' }}>
           {naturalSize ? `${naturalSize.w} × ${naturalSize.h}` : '加载中...'}
         </div>
+        {selectedElement.src && selectedElement.src.startsWith('/static/') && (
+          <button
+            className="canvas-btn"
+            style={{ width: '100%', marginTop: 4, justifyContent: 'center', fontSize: 11, background: '#1a1a2e', color: '#ccc', border: '1px solid #3a3a5a' }}
+            onClick={async () => {
+              try {
+                await axios.post('/api/open-in-folder', { url: selectedElement.src })
+              } catch (err) {
+                alert('打开文件夹失败: ' + (err?.response?.data?.detail || err.message))
+              }
+            }}
+          >
+            <FolderOpen size={12} /> 打开所在文件夹
+          </button>
+        )}
       </div>
 
       {/* Tab 切换 */}
