@@ -40,6 +40,8 @@ export default function RightPanel({
   const [refinePrompt, setRefinePrompt] = useState(null)
   // 图生视频：分辨率选择（16:9 或 9:16）
   const [i2vAspect, setI2vAspect] = useState('16:9')
+  // 图生视频：模型版本选择（pruned 截肢版 | int8 完整版）
+  const [i2vModel, setI2vModel] = useState('pruned')
 
   // 源文件真实分辨率
   const [naturalSize, setNaturalSize] = useState(null)
@@ -470,6 +472,24 @@ export default function RightPanel({
             {loading ? '生成中...' : 'Qwen3 生成提示词'}
           </button>
 
+          <div className="panel-label" style={{ marginTop: 10 }}>模型版本</div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+            <button
+              className={`canvas-btn ${i2vModel === 'pruned' ? 'canvas-btn-primary' : ''}`}
+              style={{ flex: 1, justifyContent: 'center', fontSize: 12 }}
+              onClick={() => setI2vModel('pruned')}
+            >
+              截肢版
+            </button>
+            <button
+              className={`canvas-btn ${i2vModel === 'int8' ? 'canvas-btn-primary' : ''}`}
+              style={{ flex: 1, justifyContent: 'center', fontSize: 12 }}
+              onClick={() => setI2vModel('int8')}
+            >
+              INT8 完整版
+            </button>
+          </div>
+
           <div className="panel-label" style={{ marginTop: 10 }}>分辨率</div>
           <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
             <button
@@ -524,7 +544,7 @@ export default function RightPanel({
             className="canvas-btn canvas-btn-success"
             style={{ width: '100%', marginTop: 8, justifyContent: 'center' }}
             disabled={loading}
-            onClick={() => onImageToVideo(i2vPrompt, i2vDuration, i2vAspect)}
+            onClick={() => onImageToVideo(i2vPrompt, i2vDuration, i2vAspect, i2vModel)}
           >
             <Video size={16} /> {loading ? '生成中...' : (multiCount > 1 ? `多图生视频（${multiCount} 张）` : '图生视频')}
           </button>

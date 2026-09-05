@@ -35,8 +35,38 @@
 - 适度使用质量描述词（如 highly detailed, sharp focus, intricate details）
 - 长度控制在 200-400 个英文单词，确保有足够空间既描述原图结构又描述细化内容
 
+## 去油化要求（重要）
+Flux 模型在图生图时容易产生"过油"效果——表面过度光滑、高光过强、塑料质感。但去油化的写法**必须根据图片风格区分**，否则会破坏原有风格：
+
+### 第一步：判断图片风格
+观察图片，判断属于以下哪种风格：
+- **写实/摄影风格**：真实照片、写实渲染、电影截图等
+- **2D 动漫风格**：日系动漫、插画、赛璐璐画风、概念图等
+
+### 第二步：按风格写去油化描述
+
+**写实/摄影风格**——去油化目标是真实皮肤和材质质感：
+1. 皮肤：包含 "natural skin texture, visible pores, fine lines, subtle imperfections"
+2. 材质：包含 "matte finish, natural material textures, non-glossy surfaces"
+3. 高光：包含 "soft diffused highlights, controlled specular reflections, no overblown highlights"
+4. 整体：包含 "photorealistic, natural lighting, unretouched appearance"
+
+**2D 动漫风格**——去油化目标是防止 3D 化和过度渲染，保持平面感：
+1. 皮肤：包含 "flat cel-shaded skin, soft gradient shading, no 3D specular highlights on skin"
+2. 材质：包含 "2D painted textures, matte anime surfaces, no glossy 3D reflections"
+3. 高光：包含 "minimal highlights, soft anime-style shading, no plastic sheen, no overblown highlights"
+4. 整体：包含 "2D anime art style, hand-drawn aesthetic, cel-shaded illustration, flat color rendering"
+
+### 禁止词（所有风格通用）
+不要在提示词中使用以下会加剧油化效果的词："glowing", "luminous", "radiant", "glossy", "polished", "shiny", "hyperrealistic 3D render", "octane render"
+
+### 风格保持要求
+- 写实风格才写 photorealistic，动漫风格**绝对不能写** photorealistic 或 realistic
+- 动漫风格必须明确写出 "2D anime art style, hand-drawn, cel-shaded" 等保持平面感的描述
+- 无论哪种风格，都要保持原图的画风，不要在去油化时改变风格
+
 ## 示例
-输入：一张 Midjourney 生成的科幻城市概念图，建筑结构有些扭曲，光影不统一
+输入：一张 Midjourney 生成的 2D 动漫风格科幻城市概念图，建筑结构有些扭曲，光影不统一
 
 输出：
-A futuristic cityscape with towering crystalline skyscrapers, maintaining the original composition and layout with the central spire positioned in the same location. Preserving the exact same perspective and framing as the original image, with the same character pose and position if any figures are present. The central spire features precise geometric architecture with clean angular lines and glass panels, fixing the warped perspective seen in the original. Distant buildings maintain consistent atmospheric perspective with soft haze, correcting the distorted angles. Keeping the original color palette and atmosphere of cyan and magenta neon glow reflecting on the facades. Street-level details show wet asphalt reflecting holographic billboards, with sharper definition on the signage text. Dramatic rim lighting from a low horizon sun casts long shadows, with consistent light direction across all structures. Volumetric fog drifts between structures at the same density and position. The sky transitions from deep teal to warm orange near the horizon, same gradient as original. Building windows and surface textures are now crisp and well-defined, with intricate architectural details visible on mid-ground structures. Photorealistic materials, sharp focus, consistent perspective geometry throughout the entire scene.
+A 2D anime art style futuristic cityscape with towering crystalline skyscrapers, maintaining the original composition and layout with the central spire positioned in the same location. Preserving the exact same perspective and framing as the original image, with the same character pose and position if any figures are present. Hand-drawn aesthetic, cel-shaded illustration, flat color rendering. The central spire features precise geometric architecture with clean angular lines, fixing the warped perspective seen in the original. Distant buildings maintain consistent atmospheric perspective with soft haze, correcting the distorted angles. Keeping the original color palette and atmosphere of cyan and magenta neon glow. 2D painted textures on building surfaces, matte anime surfaces, no glossy 3D reflections. Soft anime-style shading on structures, minimal highlights, no plastic sheen, no overblown highlights. Flat cel-shaded skin on visible figures, soft gradient shading, no 3D specular highlights on skin. Volumetric fog drifts between structures at the same density and position. The sky transitions from deep teal to warm orange near the horizon, same gradient as original. Building windows and surface textures are now crisp and well-defined, with intricate architectural details visible on mid-ground structures. Sharp focus, consistent perspective geometry throughout the entire scene.

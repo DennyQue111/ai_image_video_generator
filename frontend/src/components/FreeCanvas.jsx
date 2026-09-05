@@ -386,7 +386,7 @@ export default function FreeCanvas() {
   }
 
   // 图生视频：选中图片 → 生成视频 → 自动连线
-  const handleImageToVideo = async (prompt, duration = 5, aspect = '16:9') => {
+  const handleImageToVideo = async (prompt, duration = 5, aspect = '16:9', modelType = 'pruned') => {
     const imgs = selectedElements.length > 0 ? selectedElements : selectedElement ? [selectedElement] : []
     if (imgs.length === 0) return
     if (imgs.length > 9) {
@@ -408,6 +408,7 @@ export default function FreeCanvas() {
         prompt: prompt || '',
         width,
         height,
+        workflow_type: modelType,
       })
       if (res.data.success && res.data.videos?.[0]) {
         const vid = res.data.videos[0]

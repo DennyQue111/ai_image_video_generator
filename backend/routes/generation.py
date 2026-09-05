@@ -68,6 +68,7 @@ class ImageToVideoRequest(BaseModel):
     fps: int = 24
     width: int = 0
     height: int = 0
+    workflow_type: str = "pruned"  # "pruned" 截肢版 | "int8" 完整 int8 版
 
 
 class InpaintRequest(BaseModel):
@@ -527,6 +528,7 @@ async def image_to_video(request: ImageToVideoRequest):
                 fps=request.fps,
                 save_prefix=f"video/MiniMax_H3_{uuid.uuid4().hex[:8]}",
                 timeout=7200,
+                workflow_type=request.workflow_type,
             )
         else:
             # LTX 工作流
