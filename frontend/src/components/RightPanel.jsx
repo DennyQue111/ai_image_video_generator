@@ -37,6 +37,8 @@ export default function RightPanel({
   const [upscaleRatio, setUpscaleRatio] = useState(2)
   // 细化子页签：LLM 生成的提示词（null=未生成，字符串=已生成可编辑）
   const [refinePrompt, setRefinePrompt] = useState(null)
+  // 图生视频：分辨率选择（16:9 或 9:16）
+  const [i2vAspect, setI2vAspect] = useState('16:9')
 
   // 源文件真实分辨率
   const [naturalSize, setNaturalSize] = useState(null)
@@ -452,6 +454,24 @@ export default function RightPanel({
             {loading ? '生成中...' : 'Qwen3 生成提示词'}
           </button>
 
+          <div className="panel-label" style={{ marginTop: 10 }}>分辨率</div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+            <button
+              className={`canvas-btn ${i2vAspect === '16:9' ? 'canvas-btn-primary' : ''}`}
+              style={{ flex: 1, justifyContent: 'center', fontSize: 13 }}
+              onClick={() => setI2vAspect('16:9')}
+            >
+              16:9 横屏
+            </button>
+            <button
+              className={`canvas-btn ${i2vAspect === '9:16' ? 'canvas-btn-primary' : ''}`}
+              style={{ flex: 1, justifyContent: 'center', fontSize: 13 }}
+              onClick={() => setI2vAspect('9:16')}
+            >
+              9:16 竖屏
+            </button>
+          </div>
+
           <div className="panel-label" style={{ marginTop: 10 }}>视频时长（秒）</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
             <input
@@ -488,7 +508,7 @@ export default function RightPanel({
             className="canvas-btn canvas-btn-success"
             style={{ width: '100%', marginTop: 8, justifyContent: 'center' }}
             disabled={loading}
-            onClick={() => onImageToVideo(i2vPrompt, i2vDuration)}
+            onClick={() => onImageToVideo(i2vPrompt, i2vDuration, i2vAspect)}
           >
             <Video size={16} /> {loading ? '生成中...' : (multiCount > 1 ? `多图生视频（${multiCount} 张）` : '图生视频')}
           </button>

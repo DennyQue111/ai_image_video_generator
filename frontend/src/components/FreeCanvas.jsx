@@ -386,7 +386,7 @@ export default function FreeCanvas() {
   }
 
   // 图生视频：选中图片 → 生成视频 → 自动连线
-  const handleImageToVideo = async (prompt, duration = 5) => {
+  const handleImageToVideo = async (prompt, duration = 5, aspect = '16:9') => {
     const imgs = selectedElements.length > 0 ? selectedElements : selectedElement ? [selectedElement] : []
     if (imgs.length === 0) return
     if (imgs.length > 9) {
@@ -397,6 +397,8 @@ export default function FreeCanvas() {
     if (duration > 8 && !confirm(`视频时长 ${duration}s 在 12GB 显存上可能 OOM，是否继续？`)) {
       return
     }
+    // 分辨率映射
+    const [width, height] = aspect === '9:16' ? [768, 1344] : [1344, 768]
     setLoading(true)
     try {
       const res = await axios.post('/api/image-to-video', {
@@ -404,6 +406,8 @@ export default function FreeCanvas() {
         reference_images: imgs.map((el) => el.src),
         duration,
         prompt: prompt || '',
+        width,
+        height,
       })
       if (res.data.success && res.data.videos?.[0]) {
         const vid = res.data.videos[0]
