@@ -96,6 +96,17 @@ class VideoPromptRequest(BaseModel):
     instruction: str = Field("", description="用户对视频的基本要求")
 
 
+class ModelViewPromptRequest(BaseModel):
+    image: str = Field(..., description="参考图片 URL")
+    instruction: str = Field("", description="用户对模型三视图的要求")
+
+
+class YoloSplitRequest(BaseModel):
+    image: str = Field(..., description="待拆分图片 URL")
+    classes: List[str] = Field(default_factory=lambda: ["person"], description="要提取的目标类别")
+    confidence: float = Field(0.25, ge=0.05, le=0.95)
+
+
 # ============ 辅助函数 ============
 
 def _to_full_url(url: str) -> str:
@@ -242,6 +253,60 @@ async def upload_image(file: UploadFile = File(...)):
     except Exception as e:
         logger.error("[API] Upload failed: %s", e)
         raise HTTPException(status_code=500, detail=f"上传失败: {str(e)}")
+
+
+@router.post("/api/yolo-split")
+async def yolo_split(request: YoloSplitRequest):
+    """使用 YOLO 分割目标，并返回透明前景与透明背景两张图。"""
+    try:
+        from PIL import Image
+        import numpy as np
+        from ultralytics import YOLO
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="YOLO 尚未安装。请在 backend 环境执行：pip install ultralytics pillow",
+        )
+
+    try:
+        data, _, _ = _resolve_image_data(_to_full_url(request.image))
+        source = Image.open(__import__('io').BytesIO(data)).convert("RGBA")
+        # 首次调用会自动下载轻量的 YOLOv8 分割权重 yolov8n-seg.pt。
+        model = YOLO("yolov8n-seg.pt")
+        result = model.predict(source=np.array(source.convert("RGB")), conf=request.confidence, verbose=False)[0]
+        names = result.names
+        wanted = {name.lower() for name in request.classes}
+        mask = np.zeros((source.height, source.width), dtype=np.uint8)
+        if result.masks is not None and result.boxes is not None:
+            for idx, cls_id in enumerate(result.boxes.cls.tolist()):
+                label = str(names[int(cls_id)]).lower()
+                if label in wanted:
+                    polygon = result.masks.data[idx].cpu().numpy()
+                    polygon_img = Image.fromarray((polygon * 255).astype("uint8")).resize(source.size, Image.Resampling.NEAREST)
+                    mask = np.maximum(mask, np.asarray(polygon_img))
+        if not mask.any():
+            raise HTTPException(status_code=422, detail="YOLO 没有检测到目标。可降低置信度或更换图片。")
+
+        rgba = np.asarray(source).copy()
+        foreground = rgba.copy()
+        background = rgba.copy()
+        foreground[:, :, 3] = mask
+        background[:, :, 3] = 255 - mask
+        task_folder = OUTPUT_DIR / "yolo_split"
+        task_folder.mkdir(parents=True, exist_ok=True)
+        result_items = []
+        for label, pixels in (("foreground", foreground), ("background", background)):
+            filename = f"yolo_{label}_{uuid.uuid4().hex[:8]}.png"
+            path = task_folder / filename
+            Image.fromarray(pixels, "RGBA").save(path, "PNG")
+            relative = path.relative_to(PROJECT_FILE_PATH).as_posix()
+            result_items.append({"filename": filename, "label": label, "local_path": str(path), "url": f"/static/projects/{relative}"})
+        return {"success": True, "model": "yolov8n-seg", "images": result_items}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("[API] YOLO split failed")
+        raise HTTPException(status_code=500, detail=f"YOLO 拆分失败: {str(e)}")
 
 
 @router.post("/api/text-to-image")
@@ -864,6 +929,9 @@ class RefineAnalyzeRequest(BaseModel):
 class RefineGenerateRequest(BaseModel):
     image: str = Field(..., description="源图 URL（/static/projects/... 形式）")
     prompt: str = Field(..., description="用户确认/编辑后的细化提示词")
+    model: str = Field("flux-kontext", description="图生图工作流：flux-kontext 或 flux2-scene")
+    width: int = Field(0, ge=0, le=4096)
+    height: int = Field(0, ge=0, le=4096)
 
 
 # ============ 视频提示词生成 (Video Prompt) ============
@@ -903,6 +971,27 @@ async def generate_video_prompt(request: VideoPromptRequest):
 
 
 # ============ Midjourney 概念图细化路由 ============
+
+
+@router.post("/api/model-view-prompt")
+async def model_view_prompt(request: ModelViewPromptRequest):
+    """用 Qwen3-VL 根据图片和用户要求生成三视图正视图 Flux 提示词。"""
+    raw_url = request.image.split("?")[0]
+    if "/static/projects/" not in raw_url:
+        raise HTTPException(status_code=400, detail="请上传图片（仅支持本地上传的图片）")
+    relative = raw_url.split("/static/projects/", 1)[1]
+    image_path = Path(PROJECT_FILE_PATH) / relative
+    if not image_path.exists():
+        raise HTTPException(status_code=404, detail=f"图片文件不存在: {image_path}")
+    llm_service = LLMVisionService()
+    if not llm_service.is_available():
+        raise HTTPException(status_code=503, detail="Qwen3-VL 未就绪，请确认 Ollama 已运行并下载模型：ollama pull qwen3-vl:8b")
+    try:
+        prompt = await llm_service.generate_model_view_prompt(str(image_path), request.instruction)
+        return {"success": True, "prompt": prompt}
+    except Exception as e:
+        logger.error("[API] model-view-prompt failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"模型三视图提示词生成失败: {str(e)}")
 
 
 @router.post("/api/refine-analyze")
@@ -950,6 +1039,8 @@ async def refine_generate(request: RefineGenerateRequest):
     if src_w == 0 or src_h == 0:
         src_w, src_h = 1024, 1024
         logger.warning("[API] refine-generate: 尺寸解析失败，回退到 1024x1024")
+    if request.width and request.height:
+        src_w, src_h = request.width, request.height
     src_w = max(16, src_w - (src_w % 16))
     src_h = max(16, src_h - (src_h % 16))
     logger.info("[API] refine-generate: 源图尺寸 %dx%d (对齐 16)", src_w, src_h)
@@ -962,19 +1053,35 @@ async def refine_generate(request: RefineGenerateRequest):
     task_folder = OUTPUT_DIR / "refine"
 
     try:
-        logger.info("[API] refine-generate: 调用 Flux.2 Klein 9B 图生图细化...")
-        result = await comfyui.generate_flux2_scene_hdr_and_wait(
-            source_image_url=source_image_url,
-            edit_prompt=request.prompt,
-            negative_prompt="",
-            steps=8,
-            cfg=4.0,
-            seed=-1,
-            width=src_w,
-            height=src_h,
-            denoise=0.4,
-            timeout=600,
-        )
+        logger.info("[API] refine-generate: workflow=%s prompt=%s", request.model, request.prompt[:500])
+        if request.model == "flux-kontext":
+            # 使用与图生图预设相同的 Flux.2 Kontext 参考图工作流，
+            # 该工作流包含 FluxGuidance + ReferenceLatent，提示词对图像编辑更稳定。
+            result = await comfyui.generate_flux_kontext_i2i_and_wait(
+                source_image_urls=[source_image_url],
+                edit_prompt=request.prompt,
+                negative_prompt="",
+                steps=20,
+                cfg=1.0,
+                guidance=4.0,
+                seed=-1,
+                width=src_w,
+                height=src_h,
+                timeout=600,
+            )
+        else:
+            result = await comfyui.generate_flux2_scene_hdr_and_wait(
+                source_image_url=source_image_url,
+                edit_prompt=request.prompt,
+                negative_prompt="",
+                steps=8,
+                cfg=4.0,
+                seed=-1,
+                width=src_w,
+                height=src_h,
+                denoise=0.4,
+                timeout=600,
+            )
         images = result.get("images", [])
         if not images:
             raise HTTPException(status_code=500, detail="ComfyUI 未返回任何图片")

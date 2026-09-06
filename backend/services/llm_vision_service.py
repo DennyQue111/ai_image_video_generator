@@ -242,6 +242,22 @@ class LLMVisionService:
         logger.info("[LLM] Midjourney 细化提示词生成完成: %s...", result[:200])
         return result
 
+    async def generate_model_view_prompt(self, image_path: str, user_instruction: str) -> str:
+        """根据参考图和用户要求，生成 Flux 正视图图生图提示词。"""
+        system_prompt = self._load_skill("model_views")
+        if not system_prompt:
+            system_prompt = (
+                "你是角色三视图提示词专家。根据参考图和用户要求，生成一段用于 Flux 图生图的英文正视图提示词。"
+                "保留原图主体和视觉风格，默认使用 9:16 纯白背景、影棚光；只输出提示词，不要解释。"
+            )
+        user_text = (
+            "请根据这张参考图片和用户要求，生成用于 Flux 图生图的正视图提示词。\n"
+            f"用户要求：{user_instruction or '提取图片中的主要人物，生成该人物的模型三视图正视图'}"
+        )
+        result = await self._call_llm(system_prompt, user_text, image_path)
+        logger.info("[LLM] 模型三视图正视图提示词生成完成: %s...", result[:200])
+        return result
+
     async def generate_video_prompt(self, image_path: str, user_instruction: str) -> str:
         """
         根据用户的基本需求和参考图片，生成 MiniMax H3 视频提示词

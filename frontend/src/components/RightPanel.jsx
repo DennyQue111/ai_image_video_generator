@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Sparkles, Video, ScanText, Trash2, Copy, ArrowUp, FolderOpen } from 'lucide-react'
+import { Sparkles, Video, Scissors, Trash2, ArrowUp, FolderOpen } from 'lucide-react'
 import axios from 'axios'
 
 /**
@@ -7,7 +7,7 @@ import axios from 'axios'
  * 选中画布元素时显示操作选项：
  * - 图生图：用选中的图作为源图，输入 prompt 生成新图
  * - 图生视频：用选中的图生成视频
- * - 分析：图生提示词，返回描述文本
+ * - 图片拆分：使用 YOLO 提取人物与背景
  */
 export default function RightPanel({
   selectedElement,
@@ -16,28 +16,30 @@ export default function RightPanel({
   onImageToImage,
   onImageToVideo,
   onGenerateVideoPrompt,
-  onImageToPrompt,
+  onYoloSplit,
   onUpscale,
   onSplit,
   onRefineAnalyze,
   onRefineGenerate,
+  onModelViews,
   onRemove,
   onBringToFront,
 }) {
   const [activeTab, setActiveTab] = useState('i2i')
-  const [i2iSubTab, setI2iSubTab] = useState('preset') // 图生图子页签：preset / upscale / split / refine
+  const [i2iSubTab, setI2iSubTab] = useState('preset') // 图生图子页签：preset / upscale / split / skill
+  const [skillSubTab, setSkillSubTab] = useState('refine')
   const [i2iPrompt, setI2iPrompt] = useState('')
   const [i2iModel, setI2iModel] = useState('gemini-2.5-flash-image')
   const [i2iWidth, setI2iWidth] = useState(1024) // 图生图输出宽（像素 px）
   const [i2iHeight, setI2iHeight] = useState(1024) // 图生图输出高（像素 px）
   const [i2vPrompt, setI2vPrompt] = useState('')
   const [i2vDuration, setI2vDuration] = useState(5) // 视频时长（秒），范围 2-15
-  const [analyzedPrompt, setAnalyzedPrompt] = useState('')
 
   // 放大子页签：放大倍数
   const [upscaleRatio, setUpscaleRatio] = useState(2)
   // 细化子页签：LLM 生成的提示词（null=未生成，字符串=已生成可编辑）
   const [refinePrompt, setRefinePrompt] = useState(null)
+  const [modelViewInstruction, setModelViewInstruction] = useState('提取图片中的主要人物，生成这个人物的模型三视图。默认保留原图的图片风格。')
   // 图生视频：分辨率选择（16:9 或 9:16）
   const [i2vAspect, setI2vAspect] = useState('16:9')
   // 图生视频：模型版本选择（pruned 截肢版 | int8 完整版）
@@ -84,11 +86,6 @@ export default function RightPanel({
         </div>
       </div>
     )
-  }
-
-  const handleAnalyze = async () => {
-    const result = await onImageToPrompt()
-    if (result) setAnalyzedPrompt(result)
   }
 
   return (
@@ -145,10 +142,10 @@ export default function RightPanel({
           图生视频
         </div>
         <div
-          className={`right-panel-tab ${activeTab === 'analyze' ? 'active' : ''}`}
-          onClick={() => setActiveTab('analyze')}
+          className={`right-panel-tab ${activeTab === 'split' ? 'active' : ''}`}
+          onClick={() => setActiveTab('split')}
         >
-          分析
+          图片拆分
         </div>
       </div>
 
@@ -176,10 +173,10 @@ export default function RightPanel({
               分割
             </div>
             <div
-              className={`right-panel-subtab ${i2iSubTab === 'refine' ? 'active' : ''}`}
-              onClick={() => setI2iSubTab('refine')}
+              className={`right-panel-subtab ${i2iSubTab === 'skill' ? 'active' : ''}`}
+              onClick={() => setI2iSubTab('skill')}
             >
-              细化
+              Skill
             </div>
           </div>
 
@@ -385,16 +382,34 @@ export default function RightPanel({
             </div>
           )}
 
-          {/* 细化子页签：第一步 Qwen3-VL 分析 → 第二步 用户编辑提示词 → Flux.2 生图 */}
-          {i2iSubTab === 'refine' && (
+        </div>
+      )}
+
+      {/* Skill Tab */}
+      {activeTab === 'i2i' && i2iSubTab === 'skill' && (
+        <div>
+          <div className="right-panel-subtabs">
+            <div
+              className={`right-panel-subtab ${skillSubTab === 'refine' ? 'active' : ''}`}
+              onClick={() => setSkillSubTab('refine')}
+            >
+              细化
+            </div>
+            <div
+              className={`right-panel-subtab ${skillSubTab === 'modelViews' ? 'active' : ''}`}
+              onClick={() => setSkillSubTab('modelViews')}
+            >
+              模型三视图
+            </div>
+          </div>
+
+          {skillSubTab === 'refine' && (
             <div>
               {multiCount > 1 && (
                 <div style={{ color: '#f59e0b', fontSize: 11, marginBottom: 8 }}>
                   细化仅支持单图，请只选中一张图片。
                 </div>
               )}
-
-              {/* 第一步：生成提示词 */}
               <button
                 className="canvas-btn canvas-btn-primary"
                 style={{ width: '100%', justifyContent: 'center' }}
@@ -406,8 +421,6 @@ export default function RightPanel({
               >
                 {loading ? '分析中...' : '生成细化提示词'}
               </button>
-
-              {/* 第二步：可编辑提示词 + 提交生图 */}
               {refinePrompt !== null && (
                 <>
                   <div className="panel-label" style={{ marginTop: 8 }}>细化提示词（可编辑）</div>
@@ -428,6 +441,31 @@ export default function RightPanel({
                   </button>
                 </>
               )}
+            </div>
+          )}
+
+          {skillSubTab === 'modelViews' && (
+            <div>
+              <div className="panel-label">模型三视图要求</div>
+              <textarea
+                className="canvas-textarea"
+                value={modelViewInstruction}
+                onChange={(e) => setModelViewInstruction(e.target.value)}
+                rows={6}
+                style={{ marginTop: 4, fontSize: 12 }}
+                placeholder="例如：提取图片中间的人物，生成这个人物的模型三视图；保留原图风格。"
+              />
+              <div style={{ color: '#777', fontSize: 11, lineHeight: 1.5, marginTop: 6 }}>
+                将按 9:16 生成正视图、侧视图、背视图。正视图提示词由 Qwen3-VL 生成，后两张使用固定视图提示词。
+              </div>
+              <button
+                className="canvas-btn canvas-btn-success"
+                style={{ width: '100%', marginTop: 8, justifyContent: 'center' }}
+                disabled={loading || multiCount > 1 || !modelViewInstruction.trim()}
+                onClick={() => onModelViews && onModelViews(modelViewInstruction)}
+              >
+                {loading ? '正在生成三视图...' : '生成模型三视图'}
+              </button>
             </div>
           )}
         </div>
@@ -551,39 +589,32 @@ export default function RightPanel({
         </div>
       )}
 
-      {/* 分析 Tab */}
-      {activeTab === 'analyze' && (
+      {/* 图片拆分 Tab */}
+      {activeTab === 'split' && (
         <div>
+          <div style={{
+            padding: '8px 10px',
+            borderRadius: 6,
+            fontSize: 12,
+            background: 'rgba(45,45,74,0.4)',
+            color: '#aaa',
+            border: '1px solid #2a2a4a',
+            marginBottom: 8,
+            lineHeight: 1.6,
+          }}>
+            使用 YOLO 实例分割当前图片中的人物，生成“人物前景”和“透明背景”两个新节点。首次运行需要下载模型权重。
+          </div>
           <button
             className="canvas-btn canvas-btn-primary"
             style={{ width: '100%', justifyContent: 'center' }}
             disabled={loading}
-            onClick={handleAnalyze}
+            onClick={() => onYoloSplit && onYoloSplit(0.25)}
           >
-            <ScanText size={16} /> {loading ? '分析中...' : '分析图片提示词'}
+            <Scissors size={16} /> {loading ? '拆分中...' : 'YOLO 拆分人物 / 背景'}
           </button>
-          {analyzedPrompt && (
-            <div style={{ marginTop: 8 }}>
-              <div className="panel-label">分析结果</div>
-              <textarea
-                className="canvas-textarea"
-                value={analyzedPrompt}
-                readOnly
-                rows={5}
-                style={{ marginTop: 4 }}
-              />
-              <button
-                className="canvas-btn canvas-btn-success"
-                style={{ width: '100%', marginTop: 4, justifyContent: 'center' }}
-                onClick={() => {
-                  setI2iPrompt(analyzedPrompt)
-                  setActiveTab('i2i')
-                }}
-              >
-                <Copy size={16} /> 用此提示词做图生图
-              </button>
-            </div>
-          )}
+          <div style={{ color: '#666', fontSize: 11, marginTop: 8, lineHeight: 1.5 }}>
+            当前是基础测试：只提取 person 类别。复杂场景、多人遮挡和细发丝边缘可能需要后续调整模型或增加 SAM 精修。
+          </div>
         </div>
       )}
 

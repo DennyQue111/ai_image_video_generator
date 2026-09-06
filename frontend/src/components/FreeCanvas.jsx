@@ -259,12 +259,18 @@ export default function FreeCanvas() {
   }
 
   // 细化第二步：用户确认提示词 → Flux.2 生图 → 结果连线到原图
-  const handleRefineGenerate = async (prompt) => {
+  const handleRefineGenerate = async (prompt, sourceUrl = null, width = 0, height = 0, label = 'refine', position = null) => {
     const el = selectedElement
     if (!el) return
     setLoading(true)
     try {
-      const res = await axios.post('/api/refine-generate', { image: el.src, prompt })
+      const res = await axios.post('/api/refine-generate', {
+        image: sourceUrl || el.src,
+        prompt,
+        model: 'flux-kontext',
+        width,
+        height,
+      })
       if (res.data.success && res.data.images?.[0]) {
         const img = res.data.images[0]
         const imgUrl = img.url || img.local_url
@@ -283,7 +289,7 @@ export default function FreeCanvas() {
             src: imgUrl,
             width: w,
             height: h,
-            position: { x: (el.x || 0) + (el.width || 256) + 100, y: el.y || 0 },
+            position: position || { x: (el.x || 0) + (el.width || 256) + 100, y: el.y || 0 },
           })
           addEdgeBetween(el.id, resultId)
         }
@@ -292,7 +298,68 @@ export default function FreeCanvas() {
         alert('细化失败：未返回图片')
       }
     } catch (err) {
-      alert('细化失败: ' + formatErr(err))
+      alert(`${label === 'refine' ? '细化' : label}失败: ` + formatErr(err))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // 模型三视图：Qwen 生成正视图提示词，再由 Flux 生成正/侧/背三张 9:16 图片
+  const handleModelViews = async (instruction) => {
+    const el = selectedElement
+    if (!el) return
+    setLoading(true)
+    try {
+      const promptRes = await axios.post('/api/model-view-prompt', {
+        image: el.src,
+        instruction,
+      })
+      const frontPrompt = promptRes.data.prompt
+      if (!frontPrompt) throw new Error('Qwen 未返回正视图提示词')
+
+      const generate = async (sourceUrl, prompt, label, y) => {
+        const res = await axios.post('/api/refine-generate', {
+          image: sourceUrl,
+          prompt,
+          model: 'flux-kontext',
+          width: 768,
+          height: 1344,
+        })
+        const item = res.data.images?.[0]
+        if (!item) throw new Error(`${label}未返回图片`)
+        const imgUrl = item.url || item.local_url
+        const imgEl = new window.Image()
+        imgEl.crossOrigin = 'anonymous'
+        await new Promise((resolve, reject) => {
+          imgEl.onload = resolve
+          imgEl.onerror = reject
+          imgEl.src = imgUrl
+        })
+        const resultId = addNode({
+          src: imgUrl,
+          width: 192,
+          height: 336,
+          position: { x: (el.x || 0) + (el.width || 256) + 120, y },
+        })
+        return { id: resultId, url: imgUrl }
+      }
+
+      const baseX = el.y || 0
+      const front = await generate(
+        el.src,
+        frontPrompt,
+        '正视图',
+        baseX,
+      )
+      const sidePrompt = 'Using this character front view as the reference, generate the exact same character in a strict left side view, full body, natural standing pose, hands naturally down, no props, 9:16 portrait composition, preserve the original image style, pure white studio background and studio lighting.'
+      const backPrompt = 'Using this character front view as the reference, generate the exact same character in a strict back view, full body, natural standing pose, hands naturally down, no props, 9:16 portrait composition, preserve the original image style, pure white studio background and studio lighting.'
+      const side = await generate(front.url, sidePrompt, '侧视图', baseX + 360)
+      const back = await generate(front.url, backPrompt, '背视图', baseX + 720)
+      addEdgeBetween(el.id, front.id)
+      addEdgeBetween(front.id, side.id)
+      addEdgeBetween(front.id, back.id)
+    } catch (err) {
+      alert('模型三视图生成失败: ' + formatErr(err))
     } finally {
       setLoading(false)
     }
@@ -359,6 +426,52 @@ export default function FreeCanvas() {
       }
     } catch (err) {
       alert('分割失败: ' + formatErr(err))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // YOLO 实例分割：提取人物前景与透明背景，结果自动连回源图
+  const handleYoloSplit = async (confidence = 0.25) => {
+    const el = selectedElement
+    if (!el) return
+    setLoading(true)
+    try {
+      const res = await axios.post('/api/yolo-split', {
+        image: el.src,
+        classes: ['person'],
+        confidence,
+      })
+      const results = res.data.images || []
+      if (!results.length) throw new Error('YOLO 未返回拆分结果')
+      const baseX = (el.x || 0) + (el.width || 256) + 100
+      for (let i = 0; i < results.length; i++) {
+        const item = results[i]
+        const imgEl = new window.Image()
+        imgEl.crossOrigin = 'anonymous'
+        await new Promise((resolve, reject) => {
+          imgEl.onload = resolve
+          imgEl.onerror = reject
+          imgEl.src = item.url
+        })
+        const maxSize = 320
+        let w = imgEl.naturalWidth || el.width || 256
+        let h = imgEl.naturalHeight || el.height || 256
+        if (w > maxSize || h > maxSize) {
+          const ratio = Math.min(maxSize / w, maxSize / h)
+          w = Math.round(w * ratio)
+          h = Math.round(h * ratio)
+        }
+        const resultId = addNode({
+          src: item.url,
+          width: w,
+          height: h,
+          position: { x: baseX, y: (el.y || 0) + i * (h + 24) },
+        })
+        addEdgeBetween(el.id, resultId)
+      }
+    } catch (err) {
+      alert('YOLO 拆分失败: ' + formatErr(err))
     } finally {
       setLoading(false)
     }
@@ -432,26 +545,6 @@ export default function FreeCanvas() {
     } finally {
       setLoading(false)
     }
-  }
-
-  // 图生提示词：选中图片 → 分析 → 返回描述文本
-  const handleImageToPrompt = async () => {
-    if (!selectedElement) return null
-    setLoading(true)
-    try {
-      const res = await axios.post('/api/gemini-image-to-prompt', {
-        image: selectedElement.src,
-      })
-      if (res.data.success) {
-        const data = res.data.data || {}
-        return data.fullPrompt || data.subjectDescription || ''
-      }
-    } catch (err) {
-      alert('图生提示词失败: ' + formatErr(err))
-    } finally {
-      setLoading(false)
-    }
-    return null
   }
 
   return (
@@ -530,11 +623,12 @@ export default function FreeCanvas() {
         onImageToImage={handleImageToImage}
         onImageToVideo={handleImageToVideo}
         onGenerateVideoPrompt={handleGenerateVideoPrompt}
-        onImageToPrompt={handleImageToPrompt}
+        onYoloSplit={handleYoloSplit}
         onUpscale={handleUpscale}
         onSplit={handleSplit}
         onRefineAnalyze={handleRefineAnalyze}
         onRefineGenerate={handleRefineGenerate}
+        onModelViews={handleModelViews}
         onRemove={() => removeNode(selectedId)}
         onBringToFront={() => bringToFront(selectedId)}
       />
