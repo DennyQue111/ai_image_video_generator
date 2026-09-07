@@ -89,6 +89,26 @@ export default function RightPanel({
     )
   }
 
+  // 模型节点使用独立面板，不显示图片专用的图生图/图生视频/拆分功能
+  if (selectedElement.type === 'model') {
+    return (
+      <div className="right-panel">
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ height: 90, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#111827', borderRadius: 8, color: '#cbd5e1', fontSize: 13 }}>3D 模型</div>
+          <div style={{ fontSize: 11, color: '#777', marginTop: 6 }}>
+            {selectedElement.format?.toUpperCase() || 'GLB'} · {selectedElement.sizeBytes ? `${(selectedElement.sizeBytes / 1024 / 1024).toFixed(1)} MB` : '模型文件'}
+          </div>
+        </div>
+        <div style={{ marginTop: 12, padding: 10, borderRadius: 6, background: 'rgba(45,45,74,0.4)', color: '#aaa', fontSize: 12, lineHeight: 1.6 }}>
+          当前模型节点支持预览、缩放和连线。拓扑、UV、贴图和动画操作将在后续 Skill 节点中接入。
+        </div>
+        <div style={{ marginTop: 12, paddingTop: 8, borderTop: '1px solid #2a2a4a' }} />
+        <button className="canvas-btn canvas-btn-primary" style={{ justifyContent: 'center' }} onClick={onBringToFront}><ArrowUp size={16} /> 置顶</button>
+        <button className="canvas-btn canvas-btn-danger" style={{ justifyContent: 'center' }} onClick={onRemove}><Trash2 size={16} /> 删除</button>
+      </div>
+    )
+  }
+
   return (
     <div className="right-panel">
       {/* 选中元素预览 */}

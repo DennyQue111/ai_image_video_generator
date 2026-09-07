@@ -1,12 +1,18 @@
 import { memo, useEffect, useRef, useState } from 'react'
-import { Handle, Position } from 'reactflow'
+import { Handle, Position, NodeResizer, useReactFlow } from 'reactflow'
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 
-function ModelNode({ data, selected }) {
+function ModelNode({ data, selected, id }) {
   const mountRef = useRef(null)
   const [status, setStatus] = useState('加载中…')
+  const { setNodes } = useReactFlow()
+  const handleResize = (_, params) => {
+    setNodes((nodes) => nodes.map((node) => node.id === id
+      ? { ...node, data: { ...node.data, width: Math.round(params.width), height: Math.round(params.height) } }
+      : node))
+  }
 
   useEffect(() => {
     if (!mountRef.current || data.format !== 'glb') {
@@ -23,6 +29,14 @@ function ModelNode({ data, selected }) {
     renderer.setSize(mount.clientWidth || 256, mount.clientHeight || 256)
     renderer.outputColorSpace = THREE.SRGBColorSpace
     mount.appendChild(renderer.domElement)
+    const resizeObserver = new ResizeObserver(() => {
+      const width = mount.clientWidth || 256
+      const height = mount.clientHeight || 256
+      renderer.setSize(width, height)
+      camera.aspect = width / height
+      camera.updateProjectionMatrix()
+    })
+    resizeObserver.observe(mount)
     scene.add(new THREE.HemisphereLight(0xffffff, 0x334155, 2))
     const key = new THREE.DirectionalLight(0xffffff, 2)
     key.position.set(3, 5, 4)
@@ -57,6 +71,7 @@ function ModelNode({ data, selected }) {
       disposed = true
       cancelAnimationFrame(frame)
       controls.dispose()
+      resizeObserver.disconnect()
       renderer.dispose()
       mount.replaceChildren()
     }
@@ -64,7 +79,9 @@ function ModelNode({ data, selected }) {
 
   return (
     <div className={`rf-image-node ${selected ? 'rf-node-selected' : ''}`}>
+      <NodeResizer isVisible={selected} minWidth={180} minHeight={150} color="#a78bfa" onResizeEnd={handleResize} />
       <Handle type="target" position={Position.Left} id="input" style={{ background: '#3b82f6', border: '2px solid #fff', width: 10, height: 10 }} />
+      <div className="model-node-drag-handle" title="拖动此处移动模型节点" style={{ position: 'absolute', zIndex: 10, top: 5, left: 5, width: 24, height: 24, borderRadius: 5, background: 'rgba(15,23,42,.85)', color: '#e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'move', fontSize: 14 }}>⠿</div>
       <div className="rf-node-media" style={{ width: data.width || 320, height: data.height || 240, position: 'relative' }}>
         <div ref={mountRef} style={{ width: '100%', height: '100%' }} />
         <span style={{ position: 'absolute', left: 6, bottom: 5, color: '#cbd5e1', fontSize: 10, background: 'rgba(15,23,42,.8)', padding: '2px 5px', borderRadius: 3 }}>{status}</span>

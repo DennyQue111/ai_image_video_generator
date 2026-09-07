@@ -26,6 +26,7 @@ export function useCanvasElements() {
       const newNode = {
         id,
         type: nodeData.type || 'imageNode',
+        dragHandle: nodeData.dragHandle || (nodeData.type === 'modelNode' ? '.model-node-drag-handle' : undefined),
         position: nodeData.position || { x: 250, y: 200 },
         data: {
           src: nodeData.src,
@@ -184,6 +185,7 @@ export function useCanvasElements() {
         data.nodes.map((n) => ({
           id: n.id,
           type: n.type || 'imageNode',
+          dragHandle: n.dragHandle || (n.type === 'modelNode' ? '.model-node-drag-handle' : undefined),
           position: n.position || { x: 250, y: 200 },
           data: {
             src: n.data?.src,

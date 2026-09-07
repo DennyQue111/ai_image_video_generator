@@ -1,18 +1,25 @@
 import { memo } from 'react'
-import { Handle, Position } from 'reactflow'
+import { Handle, Position, NodeResizer, useReactFlow } from 'reactflow'
 
 /**
  * React Flow 自定义节点组件
  * 渲染图片或视频，带 input（左侧）和 output（右侧）端口
  * 用户可从 output 拖线到其他节点的 input
  */
-function ImageNode({ data, selected }) {
+function ImageNode({ data, selected, id }) {
   // 节点容器固定尺寸，图片用 object-fit:contain 居中显示，不拉伸压缩
   const width = data.width || 256
   const height = data.height || 256
+  const { setNodes } = useReactFlow()
+  const handleResize = (_, params) => {
+    setNodes((nodes) => nodes.map((node) => node.id === id
+      ? { ...node, data: { ...node.data, width: Math.round(params.width), height: Math.round(params.height) } }
+      : node))
+  }
 
   return (
     <div className={`rf-image-node ${selected ? 'rf-node-selected' : ''}`}>
+      <NodeResizer isVisible={selected} minWidth={120} minHeight={100} color="#60a5fa" onResizeEnd={handleResize} />
       {/* 输入端口（左侧）——接收来自源图的连线 */}
       <Handle
         type="target"
