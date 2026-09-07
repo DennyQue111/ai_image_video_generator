@@ -4,6 +4,7 @@ import axios from 'axios'
 import 'reactflow/dist/style.css'
 import { useCanvasElements } from '../hooks/useCanvasElements'
 import ImageNode from './ImageNode'
+import ModelNode from './ModelNode'
 import Toolbar from './Toolbar'
 import RightPanel from './RightPanel'
 import ProjectBar from './ProjectBar'
@@ -12,7 +13,7 @@ const TOOLBAR_WIDTH = 240
 const RIGHT_PANEL_WIDTH = 300
 
 // 自定义节点类型映射
-const nodeTypes = { imageNode: ImageNode }
+const nodeTypes = { imageNode: ImageNode, modelNode: ModelNode }
 
 // 统一格式化后端错误，避免 alert 显示 [object Object]
 function formatErr(err) {
@@ -52,6 +53,29 @@ export default function FreeCanvas() {
 
   const [loading, setLoading] = useState(false)
   const [currentProject, setCurrentProject] = useState(null) // 当前项目名（null=未保存）
+
+  const handleModelUpload = async (file) => {
+    setLoading(true)
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      const res = await axios.post('/api/upload-model', formData)
+      const model = res.data
+      addNode({
+        type: 'modelNode',
+        src: model.url,
+        width: 320,
+        height: 240,
+        mediaType: 'model',
+        data: { format: model.format, filename: model.filename, sizeBytes: model.size_bytes },
+        position: { x: 120 + nodes.length * 25, y: 160 + nodes.length * 25 },
+      })
+    } catch (err) {
+      alert('模型上传失败: ' + formatErr(err))
+    } finally {
+      setLoading(false)
+    }
+  }
 
   // 保存项目
   const handleSaveProject = async (name) => {
@@ -561,6 +585,7 @@ export default function FreeCanvas() {
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
       {/* 左侧工具栏 */}
       <Toolbar
+        onAddModel={handleModelUpload}
         onAddImage={(el) =>
           addNode({
             src: el.src,

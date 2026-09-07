@@ -51,6 +51,7 @@ export default function RightPanel({
   useEffect(() => {
     setNaturalSize(null)
     if (!selectedElement?.src) return
+    if (selectedElement.type === 'model') return
     if (selectedElement.type === 'video') {
       const v = document.createElement('video')
       v.preload = 'metadata'
@@ -92,7 +93,11 @@ export default function RightPanel({
     <div className="right-panel">
       {/* 选中元素预览 */}
       <div style={{ textAlign: 'center' }}>
-        {selectedElement.type === 'video' ? (
+        {selectedElement.type === 'model' ? (
+          <div style={{ height: 90, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#111827', borderRadius: 8, color: '#cbd5e1', fontSize: 13 }}>
+            3D 模型节点
+          </div>
+        ) : selectedElement.type === 'video' ? (
           <video
             src={selectedElement.src}
             style={{ maxWidth: '100%', borderRadius: 8 }}
@@ -108,7 +113,9 @@ export default function RightPanel({
           />
         )}
         <div style={{ fontSize: 11, color: '#777', marginTop: 4, textAlign: 'center' }}>
-          {naturalSize ? `${naturalSize.w} × ${naturalSize.h}` : '加载中...'}
+          {selectedElement.type === 'model'
+            ? `${selectedElement.format?.toUpperCase() || '3D'} · ${selectedElement.sizeBytes ? `${(selectedElement.sizeBytes / 1024 / 1024).toFixed(1)} MB` : '模型'}`
+            : (naturalSize ? `${naturalSize.w} × ${naturalSize.h}` : '加载中...')}
         </div>
         {selectedElement.src && selectedElement.src.startsWith('/static/') && (
           <button

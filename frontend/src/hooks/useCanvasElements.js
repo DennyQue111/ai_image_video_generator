@@ -25,7 +25,7 @@ export function useCanvasElements() {
       const id = nodeData.id || genId()
       const newNode = {
         id,
-        type: 'imageNode',
+        type: nodeData.type || 'imageNode',
         position: nodeData.position || { x: 250, y: 200 },
         data: {
           src: nodeData.src,
@@ -138,6 +138,9 @@ export function useCanvasElements() {
     width: n.data.width,
     height: n.data.height,
     type: n.data.mediaType,
+    format: n.data.format,
+    filename: n.data.filename,
+    sizeBytes: n.data.sizeBytes,
     x: n.position.x,
     y: n.position.y,
   })
@@ -158,6 +161,9 @@ export function useCanvasElements() {
         width: n.data.width,
         height: n.data.height,
         mediaType: n.data.mediaType,
+        format: n.data.format,
+        filename: n.data.filename,
+        sizeBytes: n.data.sizeBytes,
       },
     }))
     const cleanEdges = edges.map((e) => ({
@@ -184,6 +190,9 @@ export function useCanvasElements() {
             width: n.data?.width || 256,
             height: n.data?.height || 256,
             mediaType: n.data?.mediaType || 'image',
+            format: n.data?.format,
+            filename: n.data?.filename,
+            sizeBytes: n.data?.sizeBytes,
           },
         }))
       )

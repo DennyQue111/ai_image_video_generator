@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react'
-import { Upload, Sparkles, Trash2, Loader2 } from 'lucide-react'
+import { Upload, Box, Sparkles, Trash2, Loader2 } from 'lucide-react'
 import axios from 'axios'
 
 // 统一格式化后端错误，避免 alert 显示 [object Object]
@@ -22,7 +22,7 @@ function formatErr(err) {
  * - 文生图（模型选择 + prompt 输入框 + 生成按钮）
  * - 清空画布
  */
-export default function Toolbar({ onAddImage, onTextToImage, onClear, loading }) {
+export default function Toolbar({ onAddImage, onAddModel, onTextToImage, onClear, loading }) {
   const [t2iPrompt, setT2iPrompt] = useState('')
   const [t2iModel, setT2iModel] = useState('comfyui-flux2')
   const [t2iWidth, setT2iWidth] = useState(1024)
@@ -30,6 +30,7 @@ export default function Toolbar({ onAddImage, onTextToImage, onClear, loading })
   const [uploading, setUploading] = useState(false)
   const [generating, setGenerating] = useState(false)
   const fileInputRef = useRef(null)
+  const modelInputRef = useRef(null)
 
   // 上传图片文件
   const handleFileSelect = async (e) => {
@@ -50,6 +51,12 @@ export default function Toolbar({ onAddImage, onTextToImage, onClear, loading })
       setUploading(false)
       e.target.value = ''
     }
+  }
+
+  const handleModelSelect = (e) => {
+    const file = e.target.files?.[0]
+    if (file && onAddModel) onAddModel(file)
+    e.target.value = ''
   }
 
   // 文生图
@@ -91,6 +98,23 @@ export default function Toolbar({ onAddImage, onTextToImage, onClear, loading })
         accept="image/*"
         style={{ display: 'none' }}
         onChange={handleFileSelect}
+      />
+
+      <button
+        onClick={() => modelInputRef.current?.click()}
+        style={styles.btnSecondary}
+        disabled={isLoading}
+        title="上传 GLB 模型到画布"
+      >
+        <Box size={18} />
+        <span>上传 3D 模型</span>
+      </button>
+      <input
+        ref={modelInputRef}
+        type="file"
+        accept=".glb"
+        style={{ display: 'none' }}
+        onChange={handleModelSelect}
       />
 
       <div style={styles.divider} />
@@ -221,6 +245,19 @@ const styles = {
     gap: '8px',
     padding: '10px 14px',
     background: '#ef4444',
+    color: '#fff',
+    border: 'none',
+    borderRadius: '8px',
+    cursor: 'pointer',
+    fontSize: '14px',
+    fontWeight: 500,
+  },
+  btnSecondary: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    padding: '10px 14px',
+    background: '#334155',
     color: '#fff',
     border: 'none',
     borderRadius: '8px',

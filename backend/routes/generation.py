@@ -255,6 +255,32 @@ async def upload_image(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"上传失败: {str(e)}")
 
 
+@router.post("/api/upload-model")
+async def upload_model(file: UploadFile = File(...)):
+    """上传可在 Three.js 中预览的 3D 模型；当前优先支持单文件 GLB。"""
+    ext = (file.filename or "").rsplit(".", 1)[-1].lower()
+    if ext not in {"glb", "gltf", "obj", "fbx", "stl"}:
+        raise HTTPException(status_code=400, detail="仅支持 .glb、.gltf、.obj、.fbx、.stl 模型文件；推荐使用单文件 .glb")
+    try:
+        upload_dir = OUTPUT_DIR / "models"
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        filename = f"model_{uuid.uuid4().hex[:8]}.{ext}"
+        save_path = upload_dir / filename
+        with save_path.open("wb") as f:
+            shutil.copyfileobj(file.file, f)
+        relative_path = save_path.relative_to(PROJECT_FILE_PATH).as_posix()
+        return {
+            "success": True,
+            "filename": filename,
+            "format": ext,
+            "size_bytes": save_path.stat().st_size,
+            "url": f"/static/projects/{relative_path}",
+        }
+    except Exception as e:
+        logger.error("[API] Model upload failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"模型上传失败: {str(e)}")
+
+
 @router.post("/api/yolo-split")
 async def yolo_split(request: YoloSplitRequest):
     """使用 YOLO 分割目标，并返回透明前景与透明背景两张图。"""
