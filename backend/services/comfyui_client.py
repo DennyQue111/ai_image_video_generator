@@ -2839,17 +2839,15 @@ class ComfyUIClient:
         }
         scaled_ref = [f"{prefix}_scl", 0]
 
-        # Image Resize
+        # 使用 ComfyUI 原生 ImageScale，避免依赖未安装的第三方 "Image Resize" 节点。
         nodes[f"{prefix}_rsz"] = {
-            "class_type": "Image Resize",
+            "class_type": "ImageScale",
             "inputs": {
                 "image": scaled_ref,
-                "mode": resize_mode,
-                "supersample": "true",
-                "resampling": "lanczos",
-                "rescale_factor": 1,
-                "resize_width": resize_width,
-                "resize_height": resize_height,
+                "upscale_method": "lanczos",
+                "width": resize_width,
+                "height": resize_height,
+                "crop": "disabled",
             },
         }
 
@@ -3033,6 +3031,84 @@ class ComfyUIClient:
                 result = await resp.json()
                 prompt_id = result["prompt_id"]
                 logger.info("[ComfyUI] Character variant queued, prompt_id=%s", prompt_id)
+
+        return await self.wait_for_completion(prompt_id, timeout=timeout)
+
+    async def generate_qwen_multiangle_and_wait(
+        self,
+        source_image_url: str,
+        camera_prompt: str,
+        width: int = 1024,
+        height: int = 1024,
+        timeout: int = 300,
+    ) -> Dict[str, Any]:
+        """使用 Qwen Image Edit 2511 多角度 LoRA 生成指定机位图片。"""
+        logger.info("[ComfyUI] generate_qwen_multiangle_and_wait source=%s", source_image_url)
+        workflow: Dict[str, Any] = {
+            "m1": {
+                "class_type": "UNETLoader",
+                "inputs": {
+                    "unet_name": "Qwen-Image-Edit-2511-FP8_e4m3fn.safetensors",
+                    "weight_dtype": "default",
+                },
+            },
+            # 先加载机位控制 LoRA，再加载 Lightning 加速 LoRA；这是该 LoRA 的推荐组合。
+            "m2": {
+                "class_type": "LoraLoaderModelOnly",
+                "inputs": {
+                    "model": ["m1", 0],
+                    "lora_name": "Qwen_Edit\\qwen-image-edit-2511-multiple-angles-lora.safetensors",
+                    "strength_model": 0.9,
+                },
+            },
+            "m3": {
+                "class_type": "LoraLoaderModelOnly",
+                "inputs": {
+                    "model": ["m2", 0],
+                    "lora_name": "Qwen_Edit\\Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+                    "strength_model": 1.0,
+                },
+            },
+            "m4": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["m3", 0], "shift": 1}},
+            "m5": {"class_type": "CFGNorm", "inputs": {"model": ["m4", 0], "scale": 1, "strength": 1}},
+            "clip": {
+                "class_type": "CLIPLoader",
+                "inputs": {"clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors", "type": "qwen_image"},
+            },
+            "vae": {"class_type": "VAELoader", "inputs": {"vae_name": "qwen_image_vae.safetensors"}},
+        }
+
+        upload_result = await self.upload_image(source_image_url)
+        uploaded_filename = upload_result.get("name", "")
+        if not uploaded_filename:
+            raise Exception("Failed to upload source image to ComfyUI")
+        workflow["load_src"] = {"class_type": "LoadImage", "inputs": {"image": uploaded_filename}}
+
+        nodes, out_id = self._qwen_edit_nodes(
+            prefix="camera",
+            input_image_ref=["load_src", 0],
+            image2_ref=None,
+            image3_ref=None,
+            prompt=camera_prompt,
+            neg_prompt="",
+            clip_ref=["clip", 0],
+            vae_ref=["vae", 0],
+            model_ref=["m5", 0],
+            resize_width=width,
+            resize_height=height,
+        )
+        workflow.update(nodes)
+        workflow["save_out"] = {"class_type": "PreviewImage", "inputs": {"images": [out_id, 0]}}
+
+        logger.info("[ComfyUI] Queuing multiangle workflow, nodes=%d, prompt=%s", len(workflow), camera_prompt)
+        async with aiohttp.ClientSession() as session:
+            payload = {"prompt": workflow, "client_id": self.client_id}
+            async with session.post(f"{self.base_url}/prompt", json=payload) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    logger.error("[ComfyUI] Failed to queue multiangle workflow: %s", error_text)
+                    raise Exception(f"Failed to queue multiangle workflow: {error_text}")
+                prompt_id = (await resp.json())["prompt_id"]
 
         return await self.wait_for_completion(prompt_id, timeout=timeout)
 

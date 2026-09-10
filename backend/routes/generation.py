@@ -57,6 +57,15 @@ class ImageToImageRequest(BaseModel):
     height: int = 1024
 
 
+class CameraAngleRequest(BaseModel):
+    image_url: str = Field(..., description="输入场景或主体图片 URL")
+    yaw: float = Field(0, ge=-360, le=360, description="水平旋转角度")
+    pitch: float = Field(0, ge=-90, le=90, description="垂直俯仰角度")
+    distance: float = Field(1.0, ge=0.3, le=3.0, description="相机距离系数")
+    width: int = Field(1024, ge=512, le=2048)
+    height: int = Field(1024, ge=512, le=2048)
+
+
 class ImageToVideoRequest(BaseModel):
     prompt: str = Field(..., description="视频画面描述（英文）")
     first_frame_image: str = Field("", description="首帧图片 URL（LTX 必填，MiniMax 用 reference_images）")
@@ -142,6 +151,37 @@ def _apply_style(prompt: str, style: str) -> str:
         return f"{style_prompt}, {prompt}"
     logger.debug("[API] No style prompt found for style=%s", style)
     return prompt
+
+
+def _nearest(value: float, choices: list[float]) -> float:
+    return min(choices, key=lambda option: abs(value - option))
+
+
+def _build_multiangle_prompt(yaw: float, pitch: float, distance: float) -> tuple[str, dict]:
+    """将自由相机参数映射为 Multiple-Angles LoRA 训练过的 96 个标准机位。"""
+    azimuths = {
+        0: "front view",
+        45: "front-right quarter view",
+        90: "right side view",
+        135: "back-right quarter view",
+        180: "back view",
+        225: "back-left quarter view",
+        270: "left side view",
+        315: "front-left quarter view",
+    }
+    elevations = {-30: "low-angle shot", 0: "eye-level shot", 30: "elevated shot", 60: "high-angle shot"}
+    distances = {0.6: "close-up", 1.0: "medium shot", 1.8: "wide shot"}
+
+    snapped_yaw = int(_nearest(yaw % 360, list(azimuths)))
+    snapped_pitch = int(_nearest(pitch, list(elevations)))
+    snapped_distance = _nearest(distance, list(distances))
+    prompt = f"<sks> {azimuths[snapped_yaw]} {elevations[snapped_pitch]} {distances[snapped_distance]}"
+    return prompt, {
+        "yaw": snapped_yaw,
+        "pitch": snapped_pitch,
+        "distance": snapped_distance,
+        "label": f"{azimuths[snapped_yaw]} · {elevations[snapped_pitch]} · {distances[snapped_distance]}",
+    }
 
 
 def _resolve_image_data(url: str):
@@ -568,6 +608,42 @@ async def image_to_image(request: ImageToImageRequest):
     else:
         logger.warning("[API] Unsupported model: %s", request.model)
         raise HTTPException(status_code=400, detail=f"不支持的模型: {request.model}")
+
+
+@router.post("/api/camera-angle")
+async def generate_camera_angle(request: CameraAngleRequest):
+    """用 Qwen Image Edit 2511 Multiple-Angles LoRA 生成指定相机机位。"""
+    comfyui = get_comfyui_client()
+    if not await comfyui.check_connection():
+        raise HTTPException(status_code=503, detail="ComfyUI 未运行，请先启动 ComfyUI")
+
+    camera_prompt, snapped = _build_multiangle_prompt(request.yaw, request.pitch, request.distance)
+    logger.info("[API] camera-angle requested=(%s,%s,%s), snapped=%s", request.yaw, request.pitch, request.distance, snapped)
+    try:
+        result = await comfyui.generate_qwen_multiangle_and_wait(
+            source_image_url=_to_full_url(request.image_url),
+            camera_prompt=camera_prompt,
+            width=request.width,
+            height=request.height,
+            timeout=300,
+        )
+        images = result.get("images", [])
+        if not images:
+            raise HTTPException(status_code=500, detail="ComfyUI 未返回相机角度图片")
+        image = images[0]
+        comfyui_url = comfyui.get_image_url(
+            image["filename"], image.get("subfolder", ""), image.get("type", "output")
+        )
+        saved = _save_comfyui_image(comfyui_url, OUTPUT_DIR / "camera_angle", "camera")
+        return {"success": True, "images": [saved], "prompt": camera_prompt, "camera": snapped}
+    except HTTPException:
+        raise
+    except TimeoutError as e:
+        logger.error("[API] camera-angle timeout: %s", e)
+        raise HTTPException(status_code=504, detail=str(e))
+    except Exception as e:
+        logger.error("[API] camera-angle failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"相机角度生成失败: {str(e)}")
 
 
 @router.post("/api/image-to-video")

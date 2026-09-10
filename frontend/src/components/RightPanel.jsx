@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Sparkles, Video, Scissors, Trash2, ArrowUp, FolderOpen } from 'lucide-react'
+import { Sparkles, Video, Scissors, Trash2, ArrowUp, FolderOpen, Camera } from 'lucide-react'
 import axios from 'axios'
 
 /**
@@ -22,6 +22,7 @@ export default function RightPanel({
   onRefineAnalyze,
   onRefineGenerate,
   onModelViews,
+  onAddCamera,
   onRemove,
   onBringToFront,
 }) {
@@ -109,6 +110,21 @@ export default function RightPanel({
     )
   }
 
+  // 相机参数与生成操作直接在相机节点中完成，右侧仅保留节点管理操作。
+  if (selectedElement.type === 'camera') {
+    return (
+      <div className="right-panel">
+        <div style={{ padding: 12, borderRadius: 8, background: 'rgba(124,58,237,.12)', border: '1px solid #4c3a70', color: '#ddd6fe', fontSize: 13, lineHeight: 1.65 }}>
+          <Camera size={18} style={{ verticalAlign: 'middle', marginRight: 6 }} />
+          多视角相机节点<br />
+          在节点内拖动圆盘或调整滑块，再点击“生成当前角度”。
+        </div>
+        <button className="canvas-btn canvas-btn-primary" style={{ justifyContent: 'center' }} onClick={onBringToFront}><ArrowUp size={16} /> 置顶</button>
+        <button className="canvas-btn canvas-btn-danger" style={{ justifyContent: 'center' }} onClick={onRemove}><Trash2 size={16} /> 删除</button>
+      </div>
+    )
+  }
+
   return (
     <div className="right-panel">
       {/* 选中元素预览 */}
@@ -150,6 +166,15 @@ export default function RightPanel({
             }}
           >
             <FolderOpen size={12} /> 打开所在文件夹
+          </button>
+        )}
+        {selectedElement.type === 'image' && (
+          <button
+            className="canvas-btn"
+            style={{ width: '100%', marginTop: 6, justifyContent: 'center', fontSize: 12, background: '#5b21b6', color: '#fff', border: '1px solid #7c3aed' }}
+            onClick={onAddCamera}
+          >
+            <Camera size={14} /> 添加多视角相机
           </button>
         )}
       </div>

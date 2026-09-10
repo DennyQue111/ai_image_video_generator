@@ -5,6 +5,7 @@ import 'reactflow/dist/style.css'
 import { useCanvasElements } from '../hooks/useCanvasElements'
 import ImageNode from './ImageNode'
 import ModelNode from './ModelNode'
+import CameraAngleNode from './CameraAngleNode'
 import Toolbar from './Toolbar'
 import RightPanel from './RightPanel'
 import ProjectBar from './ProjectBar'
@@ -13,7 +14,7 @@ const TOOLBAR_WIDTH = 240
 const RIGHT_PANEL_WIDTH = 300
 
 // 自定义节点类型映射
-const nodeTypes = { imageNode: ImageNode, modelNode: ModelNode }
+const nodeTypes = { imageNode: ImageNode, modelNode: ModelNode, cameraNode: CameraAngleNode }
 
 // 统一格式化后端错误，避免 alert 显示 [object Object]
 function formatErr(err) {
@@ -45,10 +46,12 @@ export default function FreeCanvas() {
     onNodesChange,
     onEdgesChange,
     addEdgeBetween,
+    updateNode,
     clearAll,
     bringToFront,
     toSaveData,
     loadFromData,
+    setNodes,
   } = useCanvasElements()
 
   const [loading, setLoading] = useState(false)
@@ -77,6 +80,70 @@ export default function FreeCanvas() {
     }
   }
 
+  // 从已选图片创建相机节点；机位参数和源图关系都会保存在画布中。
+  const handleAddCamera = () => {
+    const el = selectedElement
+    if (!el || el.type !== 'image') return
+    const cameraId = addNode({
+      type: 'cameraNode',
+      width: 270,
+      height: 390,
+      mediaType: 'camera',
+      position: { x: (el.x || 0) + (el.width || 256) + 100, y: el.y || 0 },
+      data: {
+        sourceId: el.id,
+        sourceImageUrl: el.src,
+        yaw: 0,
+        pitch: 0,
+        distance: 1,
+        outputWidth: 1024,
+        outputHeight: 1024,
+        onGenerate: handleCameraGenerate,
+      },
+    })
+    addEdgeBetween(el.id, cameraId)
+  }
+
+  // 由相机节点触发：将姿态发送到 Qwen 2511 多角度工作流，并把结果接回画布。
+  async function handleCameraGenerate({ nodeId, sourceImageUrl, sourceId, yaw, pitch, distance, outputWidth = 1024, outputHeight = 1024 }) {
+    if (!sourceImageUrl) return
+    setLoading(true)
+    updateNode(nodeId, { generating: true })
+    try {
+      const res = await axios.post('/api/camera-angle', {
+        image_url: sourceImageUrl,
+        yaw,
+        pitch,
+        distance,
+        width: outputWidth,
+        height: outputHeight,
+      })
+      const item = res.data.images?.[0]
+      if (!item) throw new Error('未返回角度图片')
+      const imgUrl = item.url || item.local_url
+      const cameraNode = nodes.find((node) => node.id === nodeId)
+      const previewScale = Math.min(300 / outputWidth, 300 / outputHeight)
+      const resultId = addNode({
+        src: imgUrl,
+        width: Math.round(outputWidth * previewScale),
+        height: Math.round(outputHeight * previewScale),
+        position: {
+          x: (cameraNode?.position.x || 300) + (cameraNode?.data.width || 270) + 120,
+          y: cameraNode?.position.y || 180,
+        },
+        data: { camera: res.data.camera, cameraPrompt: res.data.prompt },
+      })
+      if (sourceId) addEdgeBetween(sourceId, resultId)
+      addEdgeBetween(nodeId, resultId)
+      updateNode(nodeId, { lastPrompt: res.data.prompt, lastCamera: res.data.camera })
+    } catch (err) {
+      alert('相机角度生成失败: ' + formatErr(err))
+    } finally {
+      updateNode(nodeId, { generating: false })
+      setLoading(false)
+    }
+  }
+
   // 保存项目
   const handleSaveProject = async (name) => {
     const data = toSaveData()
@@ -91,6 +158,12 @@ export default function FreeCanvas() {
     const res = await axios.get(`/api/projects/${encodeURIComponent(name)}`)
     if (res.data.success && res.data.project) {
       loadFromData(res.data.project)
+      // 项目文件不保存函数；恢复相机节点时重新绑定其生成回调。
+      setTimeout(() => {
+        setNodes((existing) => existing.map((node) => node.type === 'cameraNode'
+          ? { ...node, data: { ...node.data, onGenerate: handleCameraGenerate } }
+          : node))
+      }, 0)
       setCurrentProject(res.data.project.name || name)
     }
   }
@@ -654,6 +727,7 @@ export default function FreeCanvas() {
         onRefineAnalyze={handleRefineAnalyze}
         onRefineGenerate={handleRefineGenerate}
         onModelViews={handleModelViews}
+        onAddCamera={handleAddCamera}
         onRemove={() => removeNode(selectedId)}
         onBringToFront={() => bringToFront(selectedId)}
       />

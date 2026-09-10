@@ -26,7 +26,7 @@ export function useCanvasElements() {
       const newNode = {
         id,
         type: nodeData.type || 'imageNode',
-        dragHandle: nodeData.dragHandle || (nodeData.type === 'modelNode' ? '.model-node-drag-handle' : undefined),
+        dragHandle: nodeData.dragHandle || (nodeData.type === 'modelNode' ? '.model-node-drag-handle' : nodeData.type === 'cameraNode' ? '.camera-node-drag-handle' : undefined),
         position: nodeData.position || { x: 250, y: 200 },
         data: {
           src: nodeData.src,
@@ -153,20 +153,11 @@ export function useCanvasElements() {
 
   // 序列化当前画布为可保存数据（只存必要字段 + URL 引用，不存 selected 等运行时状态）
   const toSaveData = useCallback(() => {
-    const cleanNodes = nodes.map((n) => ({
-      id: n.id,
-      type: n.type,
-      position: n.position,
-      data: {
-        src: n.data.src,
-        width: n.data.width,
-        height: n.data.height,
-        mediaType: n.data.mediaType,
-        format: n.data.format,
-        filename: n.data.filename,
-        sizeBytes: n.data.sizeBytes,
-      },
-    }))
+      const cleanNodes = nodes.map((n) => {
+        // 回调函数不能保存到项目 JSON；其余节点参数（包括相机姿态）均保留。
+        const { onGenerate, ...serializableData } = n.data
+        return { id: n.id, type: n.type, position: n.position, data: serializableData }
+      })
     const cleanEdges = edges.map((e) => ({
       id: e.id,
       source: e.source,
@@ -185,16 +176,14 @@ export function useCanvasElements() {
         data.nodes.map((n) => ({
           id: n.id,
           type: n.type || 'imageNode',
-          dragHandle: n.dragHandle || (n.type === 'modelNode' ? '.model-node-drag-handle' : undefined),
+          dragHandle: n.dragHandle || (n.type === 'modelNode' ? '.model-node-drag-handle' : n.type === 'cameraNode' ? '.camera-node-drag-handle' : undefined),
           position: n.position || { x: 250, y: 200 },
           data: {
             src: n.data?.src,
             width: n.data?.width || 256,
             height: n.data?.height || 256,
             mediaType: n.data?.mediaType || 'image',
-            format: n.data?.format,
-            filename: n.data?.filename,
-            sizeBytes: n.data?.sizeBytes,
+            ...n.data,
           },
         }))
       )
