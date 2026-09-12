@@ -1,6 +1,6 @@
 """
-镜头表（分镜表）持久化路由
-保存/加载/列出/删除 镜头表 JSON 文件
+镜头表持久化路由
+保存/加载/列出/删除镜头表 JSON 文件
 每个镜头：{id, shot_no, duration, prompt, reference_images:[url...]}
 """
 
@@ -18,8 +18,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # 镜头表 JSON 存储目录
-STORYBOARD_DIR = Path(PROJECT_FILE_PATH) / "_temp" / "shotbreakdown"
-STORYBOARD_DIR.mkdir(parents=True, exist_ok=True)
+SHOT_BREAKDOWN_DIR = Path(PROJECT_FILE_PATH) / "_temp" / "shotbreakdown"
+SHOT_BREAKDOWN_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _safe_name(name: str) -> str:
@@ -28,20 +28,21 @@ def _safe_name(name: str) -> str:
     return cleaned or "untitled"
 
 
-def _storyboard_path(name: str) -> Path:
-    return STORYBOARD_DIR / f"{_safe_name(name)}.json"
+def _shot_breakdown_path(name: str) -> Path:
+    return SHOT_BREAKDOWN_DIR / f"{_safe_name(name)}.json"
 
 
-class SaveStoryboardRequest(BaseModel):
+class SaveShotBreakdownRequest(BaseModel):
     name: str = Field(..., description="镜头表名（不含扩展名）")
     shots: list = Field(default_factory=list, description="镜头数组")
+    concepts: dict = Field(default_factory=dict, description="角色、场景与道具概念数据")
 
 
-@router.get("/api/storyboards")
-async def list_storyboards():
+@router.get("/api/shot_breakdowns")
+async def list_shot_breakdowns():
     """列出所有已保存的镜头表"""
-    logger.info("[Storyboard] list requested")
-    files = sorted(STORYBOARD_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    logger.info("[ShotBreakdown] list requested")
+    files = sorted(SHOT_BREAKDOWN_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
     items = []
     for f in files:
         try:
@@ -53,27 +54,28 @@ async def list_storyboards():
                 "updated_at": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
             })
         except Exception as e:
-            logger.warning("[Storyboard] skip %s: %s", f, e)
-    return {"success": True, "storyboards": items}
+            logger.warning("[ShotBreakdown] skip %s: %s", f, e)
+    return {"success": True, "shot_breakdowns": items}
 
 
-@router.post("/api/storyboards/save")
-async def save_storyboard(request: SaveStoryboardRequest):
+@router.post("/api/shot_breakdowns/save")
+async def save_shot_breakdown(request: SaveShotBreakdownRequest):
     """保存镜头表（同名覆盖）"""
     name = _safe_name(request.name)
     if not name:
         raise HTTPException(status_code=400, detail="镜头表名不能为空")
-    logger.info("[Storyboard] save name=%s, shots=%d", name, len(request.shots))
+    logger.info("[ShotBreakdown] save name=%s, shots=%d", name, len(request.shots))
 
-    path = _storyboard_path(name)
+    path = _shot_breakdown_path(name)
     data = {
         "name": name,
         "version": 1,
         "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "shots": request.shots,
+        "concepts": request.concepts,
     }
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    logger.info("[Storyboard] saved to %s", path)
+    logger.info("[ShotBreakdown] saved to %s", path)
     return {
         "success": True,
         "name": name,
@@ -82,26 +84,26 @@ async def save_storyboard(request: SaveStoryboardRequest):
     }
 
 
-@router.get("/api/storyboards/{name}")
-async def load_storyboard(name: str):
+@router.get("/api/shot_breakdowns/{name}")
+async def load_shot_breakdown(name: str):
     """加载指定镜头表"""
-    path = _storyboard_path(name)
+    path = _shot_breakdown_path(name)
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"镜头表不存在: {name}")
-    logger.info("[Storyboard] load name=%s", name)
+    logger.info("[ShotBreakdown] load name=%s", name)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"镜头表文件损坏: {e}")
-    return {"success": True, "storyboard": data}
+    return {"success": True, "shot_breakdown": data}
 
 
-@router.delete("/api/storyboards/{name}")
-async def delete_storyboard(name: str):
+@router.delete("/api/shot_breakdowns/{name}")
+async def delete_shot_breakdown(name: str):
     """删除指定镜头表"""
-    path = _storyboard_path(name)
+    path = _shot_breakdown_path(name)
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"镜头表不存在: {name}")
     path.unlink()
-    logger.info("[Storyboard] deleted %s", path)
+    logger.info("[ShotBreakdown] deleted %s", path)
     return {"success": True, "name": name}

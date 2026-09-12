@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   FolderOpen, Save, FilePlus, Trash2, ChevronDown, Loader2,
-  Plus, X, Upload, Image as ImageIcon,
+  Plus, X, Upload, Image as ImageIcon, Clapperboard, Library,
 } from 'lucide-react'
 import axios from 'axios'
 import '../styles/ProjectManagement.css'
@@ -24,34 +24,94 @@ const genShotId = () => `shot_${Date.now()}_${shotIdCounter++}`
 
 const emptyShot = () => ({
   id: genShotId(),
+  scene_number: '',
   shot_no: '',
   duration: '',
   prompt: '',
+  shot_type: '',
+  camera_movement: '',
+  location: '',
+  time_of_day: '',
+  characters: [],
+  dialogue: '',
+  notes: '',
   reference_images: [],
 })
 
+const emptyConcepts = () => ({ characters: [], locations: [], props: [] })
+const normalizeConcepts = (value = {}) => Object.fromEntries(
+  ['characters', 'locations', 'props'].map((type) => [type, (value[type] || []).map((item, index) => ({
+    ...item,
+    id: item.id || `${type}_${Date.now()}_${index}`,
+    description: item.description || '',
+    reference_images: item.reference_images || (item.image_url ? [item.image_url] : []),
+  }))])
+)
+
+const normalizeImportedData = (raw) => {
+  const source = raw.shot_breakdown || raw
+  const sceneMap = source.scenes && !Array.isArray(source.scenes) ? source.scenes : {}
+  const shots = (source.shots || []).map((shot) => {
+    const scene = sceneMap[shot.scene] || {}
+    return {
+      ...emptyShot(),
+      ...shot,
+      id: shot.id || genShotId(),
+      scene_number: shot.scene_number || shot.scene || '',
+      shot_no: shot.shot_no || shot.shot_number || '',
+      duration: shot.duration ?? shot.duration_seconds ?? '',
+      prompt: shot.prompt || shot.description || shot.action || '',
+      location: shot.location || scene.name || '',
+      time_of_day: shot.time_of_day || scene.time || '',
+      characters: Array.isArray(shot.characters) ? shot.characters : [],
+      reference_images: shot.reference_images || [],
+    }
+  })
+  const supplied = source.concepts || raw.concepts
+  const characters = supplied?.characters || Object.entries(source.characters || {}).map(([id, item]) => ({
+    id,
+    name: item.name || id,
+    description: item.description || item.visual || '',
+    reference_images: item.reference_images || [],
+  }))
+  const locations = supplied?.locations || Object.entries(sceneMap).map(([id, item]) => ({
+    id,
+    name: item.name || id,
+    description: item.description || item.environment || '',
+    reference_images: item.reference_images || [],
+  }))
+  return {
+    name: source.name || source.title || raw.name || '',
+    shots,
+    concepts: normalizeConcepts({ characters, locations, props: supplied?.props || source.props || [] }),
+  }
+}
+
 /**
  * 镜头表（分镜表）管理页面
- * - 顶部项目栏：新建/保存/加载/删除（存后端 storyboard 接口）
+ * - 顶部项目栏：新建/保存/加载/删除（存后端 shot_breakdown 接口）
  * - 表格：镜头号 / 时长 / 提示词 / 参考图（多图上传+浏览）
  */
 export default function ProjectManagement() {
   const [shots, setShots] = useState([])
+  const [concepts, setConcepts] = useState(emptyConcepts)
+  const [activeSection, setActiveSection] = useState('shots')
   const [currentName, setCurrentName] = useState('')
   const [nameInput, setNameInput] = useState('')
   const [busy, setBusy] = useState(false)
-  const [storyboards, setStoryboards] = useState([])
+  const [shotBreakdowns, setShotBreakdowns] = useState([])
   const [open, setOpen] = useState(false)
   const [previewShot, setPreviewShot] = useState(null) // 浏览参考图的镜头
   const dropdownRef = useRef(null)
+  const jsonInputRef = useRef(null)
 
   // 拉取镜头表列表
   const refresh = useCallback(async () => {
     try {
-      const res = await axios.get('/api/storyboards')
-      if (res.data.success) setStoryboards(res.data.storyboards || [])
+      const res = await axios.get('/api/shot_breakdowns')
+      if (res.data.success) setShotBreakdowns(res.data.shot_breakdowns || [])
     } catch (err) {
-      console.error('list storyboards failed', err)
+      console.error('list shot breakdowns failed', err)
     }
   }, [])
 
@@ -126,7 +186,7 @@ export default function ProjectManagement() {
     const name = nameInput.trim() || 'untitled'
     setBusy(true)
     try {
-      const res = await axios.post('/api/storyboards/save', { name, shots })
+      const res = await axios.post('/api/shot_breakdowns/save', { name, shots, concepts })
       if (res.data.success) {
         setCurrentName(res.data.name)
         await refresh()
@@ -141,17 +201,18 @@ export default function ProjectManagement() {
   const handleLoad = async (name) => {
     setBusy(true)
     try {
-      const res = await axios.get(`/api/storyboards/${encodeURIComponent(name)}`)
-      if (res.data.success && res.data.storyboard) {
-        const loaded = (res.data.storyboard.shots || []).map((s) => ({
+      const res = await axios.get(`/api/shot_breakdowns/${encodeURIComponent(name)}`)
+      if (res.data.success && res.data.shot_breakdown) {
+        const loaded = (res.data.shot_breakdown.shots || []).map((s) => ({
+          ...emptyShot(),
+          ...s,
           id: s.id || genShotId(),
           shot_no: s.sh_no || s.shot_no || '',
-          duration: s.duration || '',
-          prompt: s.prompt || '',
           reference_images: s.reference_images || [],
         }))
         setShots(loaded)
-        setCurrentName(res.data.storyboard.name || name)
+        setConcepts(normalizeConcepts(res.data.shot_breakdown.concepts || {}))
+        setCurrentName(res.data.shot_breakdown.name || name)
         setOpen(false)
       }
     } catch (err) {
@@ -164,6 +225,7 @@ export default function ProjectManagement() {
   const handleNew = async () => {
     if (shots.length > 0 && !confirm('新建将清空当前镜头表，未保存内容会丢失，是否继续？')) return
     setShots([])
+    setConcepts(emptyConcepts())
     setCurrentName('')
   }
 
@@ -172,14 +234,30 @@ export default function ProjectManagement() {
     if (!confirm(`确定删除镜头表「${currentName}」吗？此操作不可恢复。`)) return
     setBusy(true)
     try {
-      await axios.delete(`/api/storyboards/${encodeURIComponent(currentName)}`)
+      await axios.delete(`/api/shot_breakdowns/${encodeURIComponent(currentName)}`)
       setShots([])
+      setConcepts(emptyConcepts())
       setCurrentName('')
       await refresh()
     } catch (err) {
       alert('删除失败: ' + formatErr(err))
     } finally {
       setBusy(false)
+    }
+  }
+
+  const handleImportJson = async (file) => {
+    if (!file) return
+    try {
+      const imported = normalizeImportedData(JSON.parse(await file.text()))
+      setShots(imported.shots)
+      setConcepts(imported.concepts)
+      setCurrentName('')
+      setNameInput(imported.name || file.name.replace(/\.json$/i, ''))
+    } catch (err) {
+      alert('导入失败：不是有效的镜头表 JSON。\n' + formatErr(err))
+    } finally {
+      if (jsonInputRef.current) jsonInputRef.current.value = ''
     }
   }
 
@@ -202,6 +280,11 @@ export default function ProjectManagement() {
           {busy ? <Loader2 size={16} className="spin" /> : <Save size={16} />}
           <span>保存</span>
         </button>
+        <input ref={jsonInputRef} type="file" accept="application/json,.json" hidden onChange={(e) => handleImportJson(e.target.files?.[0])} />
+        <button className="project-btn" onClick={() => jsonInputRef.current?.click()} disabled={busy} title="导入镜头表 JSON">
+          <Upload size={16} />
+          <span>导入 JSON</span>
+        </button>
         <div className="project-dropdown-wrap">
           <button className="project-btn" onClick={() => setOpen((o) => !o)} disabled={busy} title="打开镜头表">
             <FolderOpen size={16} />
@@ -209,10 +292,10 @@ export default function ProjectManagement() {
           </button>
           {open && (
             <div className="project-dropdown">
-              {storyboards.length === 0 && (
+              {shotBreakdowns.length === 0 && (
                 <div className="project-dropdown-empty">暂无已保存镜头表</div>
               )}
-              {storyboards.map((s) => (
+              {shotBreakdowns.map((s) => (
                 <div
                   key={s.name}
                   className={`project-dropdown-item ${s.name === currentName ? 'active' : ''}`}
@@ -238,6 +321,16 @@ export default function ProjectManagement() {
         </div>
       </div>
 
+      <div className="pm-section-tabs">
+        <button className={`pm-section-tab ${activeSection === 'shots' ? 'active' : ''}`} onClick={() => setActiveSection('shots')}>
+          <Clapperboard size={16} /> 镜头表
+        </button>
+        <button className={`pm-section-tab ${activeSection === 'concepts' ? 'active' : ''}`} onClick={() => setActiveSection('concepts')}>
+          <Library size={16} /> Concept 表
+        </button>
+      </div>
+
+      {activeSection === 'shots' && <>
       {/* 镜头表工具条 */}
       <div className="pm-toolbar">
         <button className="pm-add-btn" onClick={addShot} disabled={busy}>
@@ -254,16 +347,23 @@ export default function ProjectManagement() {
           <table className="pm-table">
             <thead>
               <tr>
+                <th style={{ width: 75 }}>场次</th>
                 <th style={{ width: 80 }}>镜头号</th>
-                <th style={{ width: 90 }}>时长</th>
-                <th>提示词</th>
-                <th style={{ width: 220 }}>参考图</th>
+                <th style={{ width: 70 }}>时长</th>
+                <th style={{ width: 150 }}>地点 / 时间</th>
+                <th style={{ width: 180 }}>景别 / 运镜</th>
+                <th style={{ minWidth: 280 }}>镜头描述</th>
+                <th style={{ minWidth: 180 }}>角色 / 对白</th>
+                <th style={{ width: 180 }}>参考图</th>
                 <th style={{ width: 60 }}>操作</th>
               </tr>
             </thead>
             <tbody>
               {shots.map((shot, idx) => (
                 <tr key={shot.id}>
+                  <td>
+                    <input className="pm-input pm-input-sm" value={shot.scene_number || ''} onChange={(e) => updateShot(shot.id, 'scene_number', e.target.value)} placeholder="SAE" />
+                  </td>
                   <td>
                     <input
                       className="pm-input pm-input-sm"
@@ -281,13 +381,25 @@ export default function ProjectManagement() {
                     />
                   </td>
                   <td>
+                    <input className="pm-input pm-input-sm" value={shot.location || ''} onChange={(e) => updateShot(shot.id, 'location', e.target.value)} placeholder="地点" />
+                    <input className="pm-input pm-input-sm pm-stacked" value={shot.time_of_day || ''} onChange={(e) => updateShot(shot.id, 'time_of_day', e.target.value)} placeholder="日/夜" />
+                  </td>
+                  <td>
+                    <input className="pm-input pm-input-sm" value={shot.shot_type || ''} onChange={(e) => updateShot(shot.id, 'shot_type', e.target.value)} placeholder="景别/焦段" />
+                    <textarea className="pm-textarea pm-stacked" value={shot.camera_movement || shot.camera || ''} onChange={(e) => updateShot(shot.id, 'camera_movement', e.target.value)} rows={2} placeholder="机位与运镜" />
+                  </td>
+                  <td>
                     <textarea
                       className="pm-textarea"
                       value={shot.prompt}
                       onChange={(e) => updateShot(shot.id, 'prompt', e.target.value)}
-                      placeholder="画面描述、动作、镜头语言..."
-                      rows={2}
+                      placeholder="画面动作与镜头内容..."
+                      rows={4}
                     />
+                  </td>
+                  <td>
+                    <input className="pm-input pm-input-sm" value={(shot.characters || []).join('、')} onChange={(e) => updateShot(shot.id, 'characters', e.target.value.split(/[、,，]/).map((v) => v.trim()).filter(Boolean))} placeholder="角色，用顿号分隔" />
+                    <textarea className="pm-textarea pm-stacked" value={shot.dialogue || ''} onChange={(e) => updateShot(shot.id, 'dialogue', e.target.value)} rows={2} placeholder="对白" />
                   </td>
                   <td>
                     <RefImageCell
@@ -309,6 +421,11 @@ export default function ProjectManagement() {
           </table>
         )}
       </div>
+      </>}
+
+      {activeSection === 'concepts' && (
+        <ConceptManagement concepts={concepts} setConcepts={setConcepts} busy={busy} />
+      )}
 
       {/* 参考图浏览弹窗 */}
       {previewShot && (
@@ -320,6 +437,95 @@ export default function ProjectManagement() {
           } : prev)
         }} />
       )}
+    </div>
+  )
+}
+
+const CONCEPT_GROUPS = [
+  { key: 'characters', label: '角色' },
+  { key: 'locations', label: '场景' },
+  { key: 'props', label: '道具' },
+]
+
+function ConceptManagement({ concepts, setConcepts, busy }) {
+  const [uploading, setUploading] = useState('')
+
+  const addConcept = (type) => {
+    const item = { id: `concept_${Date.now()}`, name: '', description: '', reference_images: [] }
+    setConcepts((prev) => ({ ...prev, [type]: [...(prev[type] || []), item] }))
+  }
+
+  const updateConcept = (type, id, field, value) => {
+    setConcepts((prev) => ({
+      ...prev,
+      [type]: (prev[type] || []).map((item) => item.id === id ? { ...item, [field]: value } : item),
+    }))
+  }
+
+  const removeConcept = (type, id) => {
+    setConcepts((prev) => ({ ...prev, [type]: (prev[type] || []).filter((item) => item.id !== id) }))
+  }
+
+  const uploadConceptImages = async (type, item, files) => {
+    if (!files?.length) return
+    const key = `${type}_${item.id}`
+    setUploading(key)
+    try {
+      const urls = []
+      for (const file of files) {
+        const formData = new FormData()
+        formData.append('file', file)
+        const res = await axios.post('/api/upload-image', formData)
+        if (res.data.url) urls.push(res.data.url)
+      }
+      updateConcept(type, item.id, 'reference_images', [...(item.reference_images || []), ...urls])
+    } catch (err) {
+      alert('参考图上传失败: ' + formatErr(err))
+    } finally {
+      setUploading('')
+    }
+  }
+
+  return (
+    <div className="concept-manager">
+      <div className="concept-manager-note">这里只维护角色、场景和道具资料，不调用任何生图或视频模型。</div>
+      {CONCEPT_GROUPS.map(({ key, label }) => (
+        <section className="concept-group" key={key}>
+          <div className="concept-group-header">
+            <div><strong>{label}</strong><span>{(concepts[key] || []).length} 项</span></div>
+            <button className="pm-add-btn" onClick={() => addConcept(key)} disabled={busy}><Plus size={15} /> 添加{label}</button>
+          </div>
+          {(concepts[key] || []).length === 0 ? (
+            <div className="concept-group-empty">暂无{label}资料</div>
+          ) : (
+            <div className="concept-grid-simple">
+              {(concepts[key] || []).map((item, index) => {
+                const images = item.reference_images?.length ? item.reference_images : (item.image_url ? [item.image_url] : [])
+                const itemKey = `${key}_${item.id}`
+                return (
+                  <article className="concept-card-simple" key={item.id || index}>
+                    <div className="concept-card-image">
+                      {images[0] ? <img src={images[0]} alt={item.name || label} /> : <ImageIcon size={30} />}
+                    </div>
+                    <div className="concept-card-fields">
+                      <input className="pm-input" value={item.name || ''} onChange={(e) => updateConcept(key, item.id, 'name', e.target.value)} placeholder={`${label}名称`} />
+                      <textarea className="pm-textarea" value={item.description || ''} onChange={(e) => updateConcept(key, item.id, 'description', e.target.value)} rows={4} placeholder={`${label}的稳定视觉描述、身份或环境信息`} />
+                      <div className="concept-card-actions">
+                        <label className="ref-mini-btn concept-upload" title="上传参考图">
+                          {uploading === itemKey ? <Loader2 size={14} className="spin" /> : <Upload size={14} />}
+                          <input type="file" accept="image/*" multiple hidden disabled={!!uploading} onChange={(e) => uploadConceptImages(key, item, e.target.files)} />
+                        </label>
+                        <span>{images.length ? `${images.length} 张参考图` : '无参考图'}</span>
+                        <button className="pm-row-del" onClick={() => removeConcept(key, item.id)} title={`删除${label}`}><Trash2 size={14} /></button>
+                      </div>
+                    </div>
+                  </article>
+                )
+              })}
+            </div>
+          )}
+        </section>
+      ))}
     </div>
   )
 }

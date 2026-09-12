@@ -9,6 +9,29 @@
   background: #0d0d1a;
 }
 
+.pm-section-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 16px 0;
+  background: #121224;
+  border-bottom: 1px solid #2a2a4a;
+}
+
+.pm-section-tab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 18px;
+  color: #888;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  font-size: 13px;
+}
+.pm-section-tab:hover { color: #ddd; }
+.pm-section-tab.active { color: #fff; border-bottom-color: #3b82f6; }
+
 /* 工具条 */
 .pm-toolbar {
   display: flex;
@@ -109,12 +132,80 @@
 .pm-textarea:focus { border-color: #3b82f6; }
 
 .pm-input-sm { padding: 6px 8px; }
+.pm-stacked { margin-top: 6px; }
 
 .pm-textarea {
   resize: vertical;
   min-height: 44px;
   line-height: 1.5;
 }
+
+/* ============ Concept 资料管理 ============ */
+.concept-manager {
+  flex: 1;
+  overflow: auto;
+  padding: 14px 16px 30px;
+}
+
+.concept-manager-note {
+  color: #777;
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+
+.concept-group {
+  margin-bottom: 18px;
+  background: #141428;
+  border: 1px solid #292947;
+  border-radius: 9px;
+  overflow: hidden;
+}
+
+.concept-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  background: #1c1c35;
+}
+.concept-group-header strong { color: #eee; font-size: 14px; }
+.concept-group-header span { color: #777; font-size: 12px; margin-left: 8px; }
+.concept-group-header .pm-add-btn { padding: 6px 10px; font-size: 12px; }
+
+.concept-group-empty { padding: 26px; text-align: center; color: #555; font-size: 13px; }
+
+.concept-grid-simple {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(390px, 1fr));
+  gap: 10px;
+  padding: 12px;
+}
+
+.concept-card-simple {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px;
+  background: #101020;
+  border: 1px solid #252543;
+  border-radius: 8px;
+}
+
+.concept-card-image {
+  height: 142px;
+  border-radius: 6px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #090912;
+  color: #444;
+}
+.concept-card-image img { width: 100%; height: 100%; object-fit: contain; }
+.concept-card-fields { min-width: 0; }
+.concept-card-actions { display: flex; align-items: center; gap: 8px; margin-top: 7px; color: #777; font-size: 11px; }
+.concept-card-actions .pm-row-del { margin-left: auto; }
+.concept-upload { display: flex; width: 30px; height: 30px; }
 
 /* 行删除按钮 */
 .pm-row-del {

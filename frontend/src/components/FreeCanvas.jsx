@@ -438,10 +438,10 @@ export default function FreeCanvas() {
     }
   }
 
-  // 模型三视图：Qwen 生成正视图提示词，再由 Flux 生成正/侧/背三张 9:16 图片
-  const handleModelViews = async (instruction) => {
+  // 模型三视图第一步：让 Qwen 生成正视图提示词，返回前端供用户检查和编辑
+  const handleModelViewPrompt = async (instruction) => {
     const el = selectedElement
-    if (!el) return
+    if (!el) return null
     setLoading(true)
     try {
       const promptRes = await axios.post('/api/model-view-prompt', {
@@ -450,7 +450,21 @@ export default function FreeCanvas() {
       })
       const frontPrompt = promptRes.data.prompt
       if (!frontPrompt) throw new Error('Qwen 未返回正视图提示词')
+      return frontPrompt
+    } catch (err) {
+      alert('正视图提示词生成失败: ' + formatErr(err))
+      return null
+    } finally {
+      setLoading(false)
+    }
+  }
 
+  // 模型三视图第二步：使用用户确认后的提示词生成正视图，再生成侧视图和背视图
+  const handleModelViews = async (frontPrompt) => {
+    const el = selectedElement
+    if (!el || !frontPrompt?.trim()) return
+    setLoading(true)
+    try {
       const generate = async (sourceUrl, prompt, label, y) => {
         const res = await axios.post('/api/refine-generate', {
           image: sourceUrl,
@@ -481,7 +495,7 @@ export default function FreeCanvas() {
       const baseX = el.y || 0
       const front = await generate(
         el.src,
-        frontPrompt,
+        frontPrompt.trim(),
         '正视图',
         baseX,
       )
@@ -763,6 +777,7 @@ export default function FreeCanvas() {
         onSplit={handleSplit}
         onRefineAnalyze={handleRefineAnalyze}
         onRefineGenerate={handleRefineGenerate}
+        onGenerateModelViewPrompt={handleModelViewPrompt}
         onModelViews={handleModelViews}
         onAddCamera={handleAddCamera}
         onInpaint={handleInpaint}

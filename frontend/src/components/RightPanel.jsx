@@ -22,6 +22,7 @@ export default function RightPanel({
   onSplit,
   onRefineAnalyze,
   onRefineGenerate,
+  onGenerateModelViewPrompt,
   onModelViews,
   onAddCamera,
   onInpaint,
@@ -43,6 +44,8 @@ export default function RightPanel({
   // 细化子页签：LLM 生成的提示词（null=未生成，字符串=已生成可编辑）
   const [refinePrompt, setRefinePrompt] = useState(null)
   const [modelViewInstruction, setModelViewInstruction] = useState('提取图片中的主要人物，生成这个人物的模型三视图。默认保留原图的图片风格。')
+  // Qwen 生成的正视图提示词；展示给用户确认并允许在提交 Flux 前修改
+  const [modelViewFrontPrompt, setModelViewFrontPrompt] = useState(null)
   // 图生视频：分辨率选择（16:9 或 9:16）
   const [i2vAspect, setI2vAspect] = useState('16:9')
   // 图生视频：模型版本选择（pruned 截肢版 | int8 完整版）
@@ -54,6 +57,7 @@ export default function RightPanel({
 
   useEffect(() => {
     setNaturalSize(null)
+    setModelViewFrontPrompt(null)
     if (!selectedElement?.src) return
     if (selectedElement.type === 'model') return
     if (selectedElement.type === 'video') {
@@ -526,10 +530,34 @@ export default function RightPanel({
                 className="canvas-btn canvas-btn-success"
                 style={{ width: '100%', marginTop: 8, justifyContent: 'center' }}
                 disabled={loading || multiCount > 1 || !modelViewInstruction.trim()}
-                onClick={() => onModelViews && onModelViews(modelViewInstruction)}
+                onClick={async () => {
+                  const prompt = await onGenerateModelViewPrompt?.(modelViewInstruction)
+                  if (prompt) setModelViewFrontPrompt(prompt)
+                }}
               >
-                {loading ? '正在生成三视图...' : '生成模型三视图'}
+                {loading ? '正在生成提示词...' : '生成模型三视图'}
               </button>
+              {modelViewFrontPrompt !== null && (
+                <>
+                  <div className="panel-label" style={{ marginTop: 10 }}>正视图提示词（可编辑）</div>
+                  <textarea
+                    className="canvas-textarea"
+                    value={modelViewFrontPrompt}
+                    onChange={(e) => setModelViewFrontPrompt(e.target.value)}
+                    rows={8}
+                    style={{ marginTop: 4, fontSize: 12 }}
+                    placeholder="Qwen3-VL 生成的正视图提示词会显示在这里，你可以修改后再提交。"
+                  />
+                  <button
+                    className="canvas-btn canvas-btn-primary"
+                    style={{ width: '100%', marginTop: 6, justifyContent: 'center' }}
+                    disabled={loading || !modelViewFrontPrompt.trim()}
+                    onClick={() => onModelViews?.(modelViewFrontPrompt)}
+                  >
+                    {loading ? '正在生成三视图...' : '提交生成模型三视图'}
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>
