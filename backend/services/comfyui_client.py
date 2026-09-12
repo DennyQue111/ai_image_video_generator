@@ -767,6 +767,62 @@ class ComfyUIClient:
             logger.info("[ComfyUI] Uploaded reference image %d: %s", i, upload_result["name"])
         return await self._submit_and_wait(workflow, timeout, "Flux Kontext i2i")
 
+    def _build_flux2_inpaint_workflow(
+        self,
+        prompt: str,
+        width: int,
+        height: int,
+        grow_mask_by: int = 8,
+        steps: int = 20,
+        guidance: float = 4.0,
+        seed: int = -1,
+    ) -> Dict[str, Any]:
+        """构建 FLUX.2 Klein 蒙版局部重绘工作流。"""
+        import random
+        if seed == -1:
+            seed = random.randint(0, 2**32 - 1)
+        return {
+            "model": {"class_type": "UNETLoader", "inputs": {"unet_name": "flux-2-klein-9b-fp8.safetensors", "weight_dtype": "default"}},
+            "clip": {"class_type": "CLIPLoader", "inputs": {"clip_name": "qwen_3_8b_fp8mixed.safetensors", "type": "flux2", "device": "default"}},
+            "vae": {"class_type": "VAELoader", "inputs": {"vae_name": "flux2-vae.safetensors"}},
+            "source": {"class_type": "LoadImage", "inputs": {"image": ""}},
+            "mask_image": {"class_type": "LoadImage", "inputs": {"image": ""}},
+            "source_scale": {"class_type": "ImageScale", "inputs": {"image": ["source", 0], "upscale_method": "lanczos", "width": width, "height": height, "crop": "disabled"}},
+            "mask_scale": {"class_type": "ImageScale", "inputs": {"image": ["mask_image", 0], "upscale_method": "nearest-exact", "width": width, "height": height, "crop": "disabled"}},
+            "mask": {"class_type": "ImageToMask", "inputs": {"image": ["mask_scale", 0], "channel": "red"}},
+            "source_latent": {"class_type": "VAEEncode", "inputs": {"pixels": ["source_scale", 0], "vae": ["vae", 0]}},
+            "inpaint_latent": {"class_type": "VAEEncodeForInpaint", "inputs": {"pixels": ["source_scale", 0], "vae": ["vae", 0], "mask": ["mask", 0], "grow_mask_by": grow_mask_by}},
+            "text": {"class_type": "CLIPTextEncode", "inputs": {"text": prompt, "clip": ["clip", 0]}},
+            "guidance": {"class_type": "FluxGuidance", "inputs": {"conditioning": ["text", 0], "guidance": guidance}},
+            "reference": {"class_type": "ReferenceLatent", "inputs": {"conditioning": ["guidance", 0], "latent": ["source_latent", 0]}},
+            "guider": {"class_type": "BasicGuider", "inputs": {"model": ["model", 0], "conditioning": ["reference", 0]}},
+            "noise": {"class_type": "RandomNoise", "inputs": {"noise_seed": seed}},
+            "sampler": {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "euler"}},
+            "scheduler": {"class_type": "Flux2Scheduler", "inputs": {"steps": steps, "width": width, "height": height}},
+            "sample": {"class_type": "SamplerCustomAdvanced", "inputs": {"noise": ["noise", 0], "guider": ["guider", 0], "sampler": ["sampler", 0], "sigmas": ["scheduler", 0], "latent_image": ["inpaint_latent", 0]}},
+            "decode": {"class_type": "VAEDecode", "inputs": {"samples": ["sample", 0], "vae": ["vae", 0]}},
+            # 将生成结果只合成到白色蒙版内，蒙版外像素保持原图不变。
+            "composite": {"class_type": "ImageCompositeMasked", "inputs": {"destination": ["source_scale", 0], "source": ["decode", 0], "x": 0, "y": 0, "resize_source": False, "mask": ["mask", 0]}},
+            "save": {"class_type": "SaveImage", "inputs": {"images": ["composite", 0], "filename_prefix": "flux2_inpaint"}},
+        }
+
+    async def generate_flux2_inpaint_and_wait(
+        self,
+        source_image_url: str,
+        mask_image_data: bytes,
+        edit_prompt: str,
+        width: int = 1024,
+        height: int = 1024,
+        grow_mask_by: int = 8,
+        timeout: int = 600,
+    ) -> Dict[str, Any]:
+        workflow = self._build_flux2_inpaint_workflow(edit_prompt, width, height, grow_mask_by)
+        source_upload = await self.upload_image(source_image_url)
+        mask_upload = await self.upload_image_bytes(mask_image_data, "inpaint_mask.png")
+        workflow["source"]["inputs"]["image"] = source_upload["name"]
+        workflow["mask_image"]["inputs"]["image"] = mask_upload["name"]
+        return await self._submit_and_wait(workflow, timeout, "Flux2 inpaint")
+
     def _build_flux2_i2i_workflow(
         self,
         prompt: str,
@@ -969,6 +1025,16 @@ class ComfyUIClient:
                 result = await resp.json()
                 logger.info("[ComfyUI] Image uploaded, filename=%s", result.get("name"))
                 return result
+
+    async def upload_image_bytes(self, image_data: bytes, filename: str = "image.png") -> Dict[str, Any]:
+        """将内存中的图片直接上传到 ComfyUI input。"""
+        async with aiohttp.ClientSession() as session:
+            form_data = aiohttp.FormData()
+            form_data.add_field("image", image_data, filename=filename, content_type="image/png")
+            async with session.post(f"{self.base_url}/upload/image", data=form_data) as resp:
+                if resp.status != 200:
+                    raise Exception(f"Failed to upload image bytes: {await resp.text()}")
+                return await resp.json()
     
     async def wait_for_video_completion(
         self, 

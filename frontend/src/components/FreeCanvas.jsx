@@ -295,6 +295,43 @@ export default function FreeCanvas() {
     }
   }
 
+  // 蒙版局部重绘：原图与黑白 mask 交给 FLUX.2 Klein，结果自动连回源图。
+  const handleInpaint = async ({ prompt, maskImage, width, height }) => {
+    const el = selectedElement
+    if (!el || el.type !== 'image') return false
+    setLoading(true)
+    try {
+      const res = await axios.post('/api/inpaint-image', {
+        prompt,
+        base_image: el.src,
+        mask_image: maskImage,
+        model: 'comfyui-flux2-inpaint',
+        width,
+        height,
+        grow_mask_by: 8,
+      })
+      const item = res.data.images?.[0]
+      if (!item) throw new Error('未返回局部重绘图片')
+      const imgUrl = item.url || item.local_url
+      const maxPreview = 320
+      const scale = Math.min(maxPreview / width, maxPreview / height)
+      const resultId = addNode({
+        src: imgUrl,
+        width: Math.round(width * scale),
+        height: Math.round(height * scale),
+        position: { x: (el.x || 0) + (el.width || 256) + 100, y: el.y || 0 },
+        data: { operation: 'inpaint', prompt },
+      })
+      addEdgeBetween(el.id, resultId)
+      return true
+    } catch (err) {
+      alert('Inpainting 失败: ' + formatErr(err))
+      return false
+    } finally {
+      setLoading(false)
+    }
+  }
+
   // 图生图·放大：选中单图 → SeedVR2 超清放大 → 结果作为新节点连线到原图
   const handleUpscale = async (ratio = 2) => {
     const el = selectedElement
@@ -728,6 +765,7 @@ export default function FreeCanvas() {
         onRefineGenerate={handleRefineGenerate}
         onModelViews={handleModelViews}
         onAddCamera={handleAddCamera}
+        onInpaint={handleInpaint}
         onRemove={() => removeNode(selectedId)}
         onBringToFront={() => bringToFront(selectedId)}
       />

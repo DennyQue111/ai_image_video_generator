@@ -88,6 +88,16 @@ class InpaintRequest(BaseModel):
     aspect_ratio: str = "1:1"
 
 
+class ComfyInpaintRequest(BaseModel):
+    prompt: str = Field(..., min_length=1)
+    base_image: str = Field(..., description="原图 URL")
+    mask_image: str = Field(..., description="黑底白色蒙版 data URL；白色区域会被重绘")
+    model: str = "comfyui-flux2-inpaint"
+    width: int = Field(1024, ge=256, le=2048)
+    height: int = Field(1024, ge=256, le=2048)
+    grow_mask_by: int = Field(8, ge=0, le=64)
+
+
 class ImageToPromptRequest(BaseModel):
     image: str = Field(..., description="图片 URL 或 data URL")
     model: str = "gemini-2.5-flash"
@@ -987,6 +997,47 @@ async def gemini_inpaint(request: InpaintRequest):
     except Exception as e:
         logger.error("[API] gemini-inpaint failed: %s", e)
         raise HTTPException(status_code=500, detail=f"图像修复失败: {str(e)}")
+
+
+@router.post("/api/inpaint-image")
+async def comfyui_inpaint(request: ComfyInpaintRequest):
+    """使用现有 FLUX.2 Klein 模型按前端蒙版局部重绘。"""
+    if request.model != "comfyui-flux2-inpaint":
+        raise HTTPException(status_code=400, detail=f"暂不支持的修复模型: {request.model}")
+    comfyui = get_comfyui_client()
+    if not await comfyui.check_connection():
+        raise HTTPException(status_code=503, detail="ComfyUI 未运行，请先启动 ComfyUI")
+
+    try:
+        if request.mask_image.startswith("data:"):
+            mask_data, _ = _decode_data_url(request.mask_image)
+        else:
+            mask_data, _, _ = _resolve_image_data(_to_full_url(request.mask_image))
+        result = await comfyui.generate_flux2_inpaint_and_wait(
+            source_image_url=_to_full_url(request.base_image),
+            mask_image_data=mask_data,
+            edit_prompt=request.prompt,
+            width=request.width,
+            height=request.height,
+            grow_mask_by=request.grow_mask_by,
+            timeout=600,
+        )
+        images = result.get("images", [])
+        if not images:
+            raise HTTPException(status_code=500, detail="ComfyUI 未返回修复图片")
+        image = images[0]
+        comfyui_url = comfyui.get_image_url(
+            image["filename"], image.get("subfolder", ""), image.get("type", "output")
+        )
+        saved = _save_comfyui_image(comfyui_url, OUTPUT_DIR / "inpaint", "flux2_inpaint")
+        return {"success": True, "model": request.model, "images": [saved]}
+    except HTTPException:
+        raise
+    except TimeoutError as e:
+        raise HTTPException(status_code=504, detail=str(e))
+    except Exception as e:
+        logger.error("[API] Flux2 inpaint failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"FLUX.2 局部重绘失败: {str(e)}")
 
 
 # ============ Gemini 图生提示词 (Image-to-Prompt) ============

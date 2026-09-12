@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
-import { Sparkles, Video, Scissors, Trash2, ArrowUp, FolderOpen, Camera } from 'lucide-react'
+import { Sparkles, Video, Scissors, Trash2, ArrowUp, FolderOpen, Camera, Brush } from 'lucide-react'
 import axios from 'axios'
+import InpaintMaskModal from './InpaintMaskModal'
 
 /**
  * 右侧属性面板
@@ -23,6 +24,7 @@ export default function RightPanel({
   onRefineGenerate,
   onModelViews,
   onAddCamera,
+  onInpaint,
   onRemove,
   onBringToFront,
 }) {
@@ -45,6 +47,7 @@ export default function RightPanel({
   const [i2vAspect, setI2vAspect] = useState('16:9')
   // 图生视频：模型版本选择（pruned 截肢版 | int8 完整版）
   const [i2vModel, setI2vModel] = useState('pruned')
+  const [showInpaint, setShowInpaint] = useState(false)
 
   // 源文件真实分辨率
   const [naturalSize, setNaturalSize] = useState(null)
@@ -337,6 +340,15 @@ export default function RightPanel({
           >
             <Sparkles size={16} /> {loading ? '生成中...' : (multiCount > 1 ? `多图融合（${multiCount} 张）` : '图生图')}
           </button>
+          <button
+            className="canvas-btn"
+            style={{ width: '100%', marginTop: 6, justifyContent: 'center', background: '#7c3aed' }}
+            disabled={loading || multiCount !== 1 || selectedElement.type !== 'image'}
+            onClick={() => setShowInpaint(true)}
+          >
+            <Brush size={16} /> Inpainting
+          </button>
+          {multiCount > 1 && <div style={{ color: '#f59e0b', fontSize: 11, marginTop: 4 }}>Inpainting 仅支持单张图片。</div>}
             </>
           )}
 
@@ -668,6 +680,18 @@ export default function RightPanel({
             当前是基础测试：只提取 person 类别。复杂场景、多人遮挡和细发丝边缘可能需要后续调整模型或增加 SAM 精修。
           </div>
         </div>
+      )}
+
+      {showInpaint && (
+        <InpaintMaskModal
+          imageUrl={selectedElement.src}
+          loading={loading}
+          onClose={() => setShowInpaint(false)}
+          onGenerate={async (params) => {
+            const ok = await onInpaint?.(params)
+            if (ok) setShowInpaint(false)
+          }}
+        />
       )}
 
       <div style={{ marginTop: 4, paddingTop: 8, borderTop: '1px solid #2a2a4a' }} />

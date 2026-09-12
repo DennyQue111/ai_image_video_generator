@@ -356,6 +356,25 @@ select optgroup {
 .camera-generate { width:100%; display:flex; align-items:center; justify-content:center; gap:6px; border:0; border-radius:6px; padding:8px; background:#7c3aed; color:#fff; font-weight:600; cursor:pointer; }
 .camera-generate:disabled { opacity:.5; cursor:not-allowed; }
 
+/* 自由画布内的 Inpainting 蒙版编辑器 */
+.inpaint-modal-backdrop { position:fixed; inset:0; z-index:1000; display:flex; align-items:center; justify-content:center; padding:24px; background:rgba(0,0,0,.78); }
+.inpaint-modal { width:min(1000px, 94vw); max-height:94vh; display:flex; flex-direction:column; overflow:hidden; background:#151526; border:1px solid #3a3a5a; border-radius:12px; box-shadow:0 24px 80px rgba(0,0,0,.6); }
+.inpaint-modal-header { display:flex; align-items:center; justify-content:space-between; padding:12px 16px; color:#f8fafc; border-bottom:1px solid #2a2a4a; }
+.inpaint-modal-header button { border:0; background:transparent; color:#aaa; cursor:pointer; }
+.inpaint-toolbar { display:flex; align-items:center; gap:7px; flex-wrap:wrap; padding:9px 14px; border-bottom:1px solid #2a2a4a; }
+.inpaint-toolbar label { display:flex; align-items:center; gap:6px; color:#bbb; font-size:12px; }
+.inpaint-toolbar input { width:110px; accent-color:#ef4444; }
+.inpaint-toolbar button { display:flex; align-items:center; gap:5px; padding:6px 9px; background:#202038; color:#bbb; border:1px solid #393957; border-radius:5px; cursor:pointer; }
+.inpaint-toolbar button.active { background:#b91c1c; color:#fff; border-color:#ef4444; }
+.inpaint-stage { flex:1; min-height:260px; overflow:auto; display:flex; justify-content:center; align-items:center; padding:12px; background:#090912; }
+.inpaint-image-wrap { position:relative; display:inline-block; max-width:100%; line-height:0; user-select:none; }
+.inpaint-image-wrap img { display:block; max-width:100%; max-height:56vh; width:auto; height:auto; }
+.inpaint-image-wrap canvas { position:absolute; inset:0; width:100%; height:100%; cursor:crosshair; touch-action:none; opacity:.62; }
+.inpaint-footer { display:grid; grid-template-columns:1fr auto; gap:8px 12px; padding:12px 14px; border-top:1px solid #2a2a4a; }
+.inpaint-footer textarea { grid-column:1 / -1; }
+.inpaint-help { color:#888; font-size:11px; align-self:center; }
+.inpaint-footer .canvas-btn { justify-content:center; }
+
 /* React Flow 控件深色主题 */
 .react-flow__controls {
   background: #1a1a2e;
