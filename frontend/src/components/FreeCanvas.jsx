@@ -513,8 +513,8 @@ export default function FreeCanvas() {
     }
   }
 
-  // 图片分割：选中单图 → 按上下左右各平均切成 4 块 → 上传后端 → 4 个新节点连线到原图
-  const handleSplit = async () => {
+  // 图片分割：支持 2×2（1分4）和 2×4（1分8）平均切图；结果自动上传并连回源图。
+  const handleSplit = async (mode = '4') => {
     const el = selectedElement
     if (!el) return
     setLoading(true)
@@ -528,14 +528,21 @@ export default function FreeCanvas() {
       })
       const w = imgEl.naturalWidth
       const h = imgEl.naturalHeight
-      const halfW = Math.floor(w / 2)
-      const halfH = Math.floor(h / 2)
-      const regions = [
-        { sx: 0,     sy: 0 },
-        { sx: halfW, sy: 0 },
-        { sx: 0,     sy: halfH },
-        { sx: halfW, sy: halfH },
-      ]
+      const cols = 2
+      const rows = mode === '8' ? 4 : 2
+      const tileW = Math.floor(w / cols)
+      const tileH = Math.floor(h / rows)
+      const regions = []
+      for (let row = 0; row < rows; row++) {
+        for (let col = 0; col < cols; col++) {
+          regions.push({
+            sx: col * tileW,
+            sy: row * tileH,
+            col,
+            row,
+          })
+        }
+      }
       const baseX = (el.x || 0) + (el.width || 256) + 80
       const baseY = el.y || 0
       const thumbMax = 200
@@ -543,10 +550,10 @@ export default function FreeCanvas() {
       for (let i = 0; i < regions.length; i++) {
         const r = regions[i]
         const canvas = document.createElement('canvas')
-        canvas.width = halfW
-        canvas.height = halfH
+        canvas.width = tileW
+        canvas.height = tileH
         const ctx = canvas.getContext('2d')
-        ctx.drawImage(imgEl, r.sx, r.sy, halfW, halfH, 0, 0, halfW, halfH)
+        ctx.drawImage(imgEl, r.sx, r.sy, tileW, tileH, 0, 0, tileW, tileH)
 
         // 转 blob → 上传后端 → 拿到 /static/... URL
         const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'))
@@ -556,19 +563,17 @@ export default function FreeCanvas() {
         const imgUrl = res.data.url
 
         // 缩略图尺寸
-        let tw = halfW, th = halfH
+        let tw = tileW, th = tileH
         if (tw > thumbMax || th > thumbMax) {
           const ratio = Math.min(thumbMax / tw, thumbMax / th)
           tw = Math.round(tw * ratio)
           th = Math.round(th * ratio)
         }
-        const col = i % 2
-        const row = Math.floor(i / 2)
         const resultId = addNode({
           src: imgUrl,
           width: tw,
           height: th,
-          position: { x: baseX + col * (thumbMax + 20), y: baseY + row * (thumbMax + 20) },
+          position: { x: baseX + r.col * (thumbMax + 20), y: baseY + r.row * (thumbMax + 20) },
         })
         addEdgeBetween(el.id, resultId)
       }

@@ -417,7 +417,7 @@ export default function RightPanel({
             </div>
           )}
 
-          {/* 分割子页签：选中单图 → 1分4 → 4 块自动连线到原图 */}
+          {/* 分割子页签：选中单图 → 按网格平均切成多块并自动连线到原图 */}
           {i2iSubTab === 'split' && (
             <div>
               <div style={{
@@ -430,7 +430,7 @@ export default function RightPanel({
                 marginBottom: 8,
                 lineHeight: 1.6,
               }}>
-                将当前图片按 2×2 网格平均切成 4 块，每块作为独立节点。适用于 HDR 场景图分块后再逐块放大。
+                将当前图片按网格平均切块，每块作为独立节点。`1分4` 为 2×2，`1分8` 为每行 2 张、共 4 行。
               </div>
 
               {multiCount > 1 && (
@@ -439,14 +439,22 @@ export default function RightPanel({
                 </div>
               )}
 
-              <button
-                className="canvas-btn canvas-btn-primary"
-                style={{ width: '100%', marginTop: 8, justifyContent: 'center' }}
-                disabled={loading || multiCount > 1}
-                onClick={() => onSplit && onSplit()}
-              >
-                1分4
-              </button>
+              <div className="split-action-row">
+                <button
+                  className="canvas-btn canvas-btn-primary canvas-btn-compact"
+                  disabled={loading || multiCount > 1}
+                  onClick={() => onSplit && onSplit('4')}
+                >
+                  1分4
+                </button>
+                <button
+                  className="canvas-btn canvas-btn-primary canvas-btn-compact"
+                  disabled={loading || multiCount > 1}
+                  onClick={() => onSplit && onSplit('8')}
+                >
+                  1分8
+                </button>
+              </div>
             </div>
           )}
 

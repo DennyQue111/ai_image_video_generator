@@ -251,6 +251,17 @@
 .canvas-btn-success { background: #10b981; }
 .canvas-btn-danger { background: #ef4444; }
 .canvas-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.canvas-btn-compact {
+  flex: 1;
+  justify-content: center;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+.split-action-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
 
 /* 输入框 */
 .canvas-input,
