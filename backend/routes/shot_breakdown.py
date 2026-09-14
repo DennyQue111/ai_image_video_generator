@@ -1,7 +1,7 @@
 """
 镜头表持久化路由
 保存/加载/列出/删除镜头表 JSON 文件
-每个镜头：{id, shot_no, duration, prompt, reference_images:[url...]}
+数据结构：{characters, scenes, props, shots}；每个镜头使用 camera、action、dialogue、continuity。
 """
 
 import logging
@@ -34,8 +34,11 @@ def _shot_breakdown_path(name: str) -> Path:
 
 class SaveShotBreakdownRequest(BaseModel):
     name: str = Field(..., description="镜头表名（不含扩展名）")
+    schema_version: int = Field(2, description="镜头表结构版本")
+    characters: list = Field(default_factory=list, description="角色概念资料")
+    scenes: list = Field(default_factory=list, description="场景概念资料")
+    props: list = Field(default_factory=list, description="道具概念资料")
     shots: list = Field(default_factory=list, description="镜头数组")
-    concepts: dict = Field(default_factory=dict, description="角色、场景与道具概念数据")
 
 
 @router.get("/api/shot_breakdowns")
@@ -69,10 +72,12 @@ async def save_shot_breakdown(request: SaveShotBreakdownRequest):
     path = _shot_breakdown_path(name)
     data = {
         "name": name,
-        "version": 1,
+        "schema_version": request.schema_version,
         "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "characters": request.characters,
+        "scenes": request.scenes,
+        "props": request.props,
         "shots": request.shots,
-        "concepts": request.concepts,
     }
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     logger.info("[ShotBreakdown] saved to %s", path)

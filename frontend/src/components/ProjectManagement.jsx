@@ -24,73 +24,91 @@ const genShotId = () => `shot_${Date.now()}_${shotIdCounter++}`
 
 const emptyShot = () => ({
   id: genShotId(),
-  scene_number: '',
   shot_no: '',
+  scene: '',
   duration: '',
-  prompt: '',
-  shot_type: '',
-  camera_movement: '',
-  location: '',
-  time_of_day: '',
   characters: [],
-  dialogue: '',
-  notes: '',
+  camera: { framing: '', lens: '', height: '', movement: '' },
+  action: '',
+  dialogue: [],
+  continuity: '',
   reference_images: [],
 })
 
-const emptyConcepts = () => ({ characters: [], locations: [], props: [] })
-const normalizeConcepts = (value = {}) => Object.fromEntries(
-  ['characters', 'locations', 'props'].map((type) => [type, (value[type] || []).map((item, index) => ({
+const emptyConcepts = () => ({ characters: [], scenes: [], props: [] })
+
+const toItems = (value, type) => {
+  const items = Array.isArray(value)
+    ? value
+    : Object.entries(value || {}).map(([id, item]) => ({ id, ...item }))
+  return items.map((item, index) => ({
     ...item,
     id: item.id || `${type}_${Date.now()}_${index}`,
-    description: item.description || '',
+    name: item.name || '',
+    description: item.description || item.visual || '',
+    environment: item.environment || item.description || '',
     reference_images: item.reference_images || (item.image_url ? [item.image_url] : []),
-  }))])
-)
+  }))
+}
+
+const normalizeConcepts = (value = {}) => ({
+  characters: toItems(value.characters, 'characters'),
+  scenes: toItems(value.scenes || value.locations, 'scenes'),
+  props: toItems(value.props, 'props'),
+})
+
+const normalizeDialogue = (value) => {
+  if (Array.isArray(value)) return value
+  return value ? [{ speaker: '', line: value, tone: '' }] : []
+}
+
+const dialogueToText = (dialogue = []) => dialogue
+  .map((item) => [item.speaker, item.tone ? `（${item.tone}）` : '', item.line].filter(Boolean).join(' '))
+  .join('\n')
+
+const textToDialogue = (text) => text.split('\n').map((line) => line.trim()).filter(Boolean)
+  .map((line) => ({ speaker: '', line, tone: '' }))
 
 const normalizeImportedData = (raw) => {
   const source = raw.shot_breakdown || raw
-  const sceneMap = source.scenes && !Array.isArray(source.scenes) ? source.scenes : {}
   const shots = (source.shots || []).map((shot) => {
-    const scene = sceneMap[shot.scene] || {}
+    const camera = shot.camera || {}
     return {
       ...emptyShot(),
       ...shot,
       id: shot.id || genShotId(),
-      scene_number: shot.scene_number || shot.scene || '',
       shot_no: shot.shot_no || shot.shot_number || '',
+      scene: shot.scene || shot.scene_number || '',
       duration: shot.duration ?? shot.duration_seconds ?? '',
-      prompt: shot.prompt || shot.description || shot.action || '',
-      location: shot.location || scene.name || '',
-      time_of_day: shot.time_of_day || scene.time || '',
       characters: Array.isArray(shot.characters) ? shot.characters : [],
+      camera: {
+        framing: camera.framing || shot.shot_type || '',
+        lens: camera.lens || '',
+        height: camera.height || '',
+        movement: camera.movement || shot.camera_movement || (typeof shot.camera === 'string' ? shot.camera : ''),
+      },
+      action: shot.action || shot.prompt || shot.description || '',
+      dialogue: normalizeDialogue(shot.dialogue),
+      continuity: shot.continuity || shot.notes || '',
       reference_images: shot.reference_images || [],
     }
   })
-  const supplied = source.concepts || raw.concepts
-  const characters = supplied?.characters || Object.entries(source.characters || {}).map(([id, item]) => ({
-    id,
-    name: item.name || id,
-    description: item.description || item.visual || '',
-    reference_images: item.reference_images || [],
-  }))
-  const locations = supplied?.locations || Object.entries(sceneMap).map(([id, item]) => ({
-    id,
-    name: item.name || id,
-    description: item.description || item.environment || '',
-    reference_images: item.reference_images || [],
-  }))
+  const legacyConcepts = source.concepts || raw.concepts || {}
   return {
     name: source.name || source.title || raw.name || '',
     shots,
-    concepts: normalizeConcepts({ characters, locations, props: supplied?.props || source.props || [] }),
+    concepts: normalizeConcepts({
+      characters: source.characters || legacyConcepts.characters,
+      scenes: source.scenes || legacyConcepts.scenes || legacyConcepts.locations,
+      props: source.props || legacyConcepts.props,
+    }),
   }
 }
 
 /**
  * 镜头表（分镜表）管理页面
  * - 顶部项目栏：新建/保存/加载/删除（存后端 shot_breakdown 接口）
- * - 表格：镜头号 / 时长 / 提示词 / 参考图（多图上传+浏览）
+ * - 数据结构：characters / scenes / props / shots，与导出 JSON 完全一致
  */
 export default function ProjectManagement() {
   const [shots, setShots] = useState([])
@@ -145,6 +163,12 @@ export default function ProjectManagement() {
     setShots((prev) => prev.map((s) => (s.id === id ? { ...s, [field]: value } : s)))
   }
 
+  const updateCamera = (id, field, value) => {
+    setShots((prev) => prev.map((s) => (
+      s.id === id ? { ...s, camera: { ...s.camera, [field]: value } } : s
+    )))
+  }
+
   // ========== 参考图上传 ==========
   const handleUploadRefImages = async (shotId, files) => {
     if (!files || files.length === 0) return
@@ -186,7 +210,14 @@ export default function ProjectManagement() {
     const name = nameInput.trim() || 'untitled'
     setBusy(true)
     try {
-      const res = await axios.post('/api/shot_breakdowns/save', { name, shots, concepts })
+      const res = await axios.post('/api/shot_breakdowns/save', {
+        name,
+        schema_version: 2,
+        characters: concepts.characters,
+        scenes: concepts.scenes,
+        props: concepts.props,
+        shots,
+      })
       if (res.data.success) {
         setCurrentName(res.data.name)
         await refresh()
@@ -203,16 +234,10 @@ export default function ProjectManagement() {
     try {
       const res = await axios.get(`/api/shot_breakdowns/${encodeURIComponent(name)}`)
       if (res.data.success && res.data.shot_breakdown) {
-        const loaded = (res.data.shot_breakdown.shots || []).map((s) => ({
-          ...emptyShot(),
-          ...s,
-          id: s.id || genShotId(),
-          shot_no: s.sh_no || s.shot_no || '',
-          reference_images: s.reference_images || [],
-        }))
-        setShots(loaded)
-        setConcepts(normalizeConcepts(res.data.shot_breakdown.concepts || {}))
-        setCurrentName(res.data.shot_breakdown.name || name)
+        const imported = normalizeImportedData(res.data.shot_breakdown)
+        setShots(imported.shots)
+        setConcepts(imported.concepts)
+        setCurrentName(imported.name || name)
         setOpen(false)
       }
     } catch (err) {
@@ -347,13 +372,14 @@ export default function ProjectManagement() {
           <table className="pm-table">
             <thead>
               <tr>
-                <th style={{ width: 75 }}>场次</th>
+                <th style={{ width: 90 }}>场景 ID</th>
                 <th style={{ width: 80 }}>镜头号</th>
                 <th style={{ width: 70 }}>时长</th>
-                <th style={{ width: 150 }}>地点 / 时间</th>
-                <th style={{ width: 180 }}>景别 / 运镜</th>
-                <th style={{ minWidth: 280 }}>镜头描述</th>
+                <th style={{ width: 180 }}>镜头构图</th>
+                <th style={{ width: 180 }}>机位 / 运镜</th>
+                <th style={{ minWidth: 280 }}>画面动作</th>
                 <th style={{ minWidth: 180 }}>角色 / 对白</th>
+                <th style={{ minWidth: 180 }}>连续性</th>
                 <th style={{ width: 180 }}>参考图</th>
                 <th style={{ width: 60 }}>操作</th>
               </tr>
@@ -362,7 +388,7 @@ export default function ProjectManagement() {
               {shots.map((shot, idx) => (
                 <tr key={shot.id}>
                   <td>
-                    <input className="pm-input pm-input-sm" value={shot.scene_number || ''} onChange={(e) => updateShot(shot.id, 'scene_number', e.target.value)} placeholder="SAE" />
+                    <input className="pm-input pm-input-sm" value={shot.scene || ''} onChange={(e) => updateShot(shot.id, 'scene', e.target.value)} placeholder="SAE" />
                   </td>
                   <td>
                     <input
@@ -381,25 +407,28 @@ export default function ProjectManagement() {
                     />
                   </td>
                   <td>
-                    <input className="pm-input pm-input-sm" value={shot.location || ''} onChange={(e) => updateShot(shot.id, 'location', e.target.value)} placeholder="地点" />
-                    <input className="pm-input pm-input-sm pm-stacked" value={shot.time_of_day || ''} onChange={(e) => updateShot(shot.id, 'time_of_day', e.target.value)} placeholder="日/夜" />
+                    <input className="pm-input pm-input-sm" value={shot.camera?.framing || ''} onChange={(e) => updateCamera(shot.id, 'framing', e.target.value)} placeholder="景别 / 画面角度" />
+                    <input className="pm-input pm-input-sm pm-stacked" value={shot.camera?.lens || ''} onChange={(e) => updateCamera(shot.id, 'lens', e.target.value)} placeholder="焦段，例如 50mm" />
                   </td>
                   <td>
-                    <input className="pm-input pm-input-sm" value={shot.shot_type || ''} onChange={(e) => updateShot(shot.id, 'shot_type', e.target.value)} placeholder="景别/焦段" />
-                    <textarea className="pm-textarea pm-stacked" value={shot.camera_movement || shot.camera || ''} onChange={(e) => updateShot(shot.id, 'camera_movement', e.target.value)} rows={2} placeholder="机位与运镜" />
+                    <input className="pm-input pm-input-sm" value={shot.camera?.height || ''} onChange={(e) => updateCamera(shot.id, 'height', e.target.value)} placeholder="机位，例如低机位" />
+                    <textarea className="pm-textarea pm-stacked" value={shot.camera?.movement || ''} onChange={(e) => updateCamera(shot.id, 'movement', e.target.value)} rows={2} placeholder="运镜方式" />
                   </td>
                   <td>
                     <textarea
                       className="pm-textarea"
-                      value={shot.prompt}
-                      onChange={(e) => updateShot(shot.id, 'prompt', e.target.value)}
+                      value={shot.action || ''}
+                      onChange={(e) => updateShot(shot.id, 'action', e.target.value)}
                       placeholder="画面动作与镜头内容..."
                       rows={4}
                     />
                   </td>
                   <td>
                     <input className="pm-input pm-input-sm" value={(shot.characters || []).join('、')} onChange={(e) => updateShot(shot.id, 'characters', e.target.value.split(/[、,，]/).map((v) => v.trim()).filter(Boolean))} placeholder="角色，用顿号分隔" />
-                    <textarea className="pm-textarea pm-stacked" value={shot.dialogue || ''} onChange={(e) => updateShot(shot.id, 'dialogue', e.target.value)} rows={2} placeholder="对白" />
+                    <textarea className="pm-textarea pm-stacked" value={dialogueToText(shot.dialogue)} onChange={(e) => updateShot(shot.id, 'dialogue', textToDialogue(e.target.value))} rows={2} placeholder="对白，每行一条" />
+                  </td>
+                  <td>
+                    <textarea className="pm-textarea" value={shot.continuity || ''} onChange={(e) => updateShot(shot.id, 'continuity', e.target.value)} rows={3} placeholder="承接上一镜头的角色、空间、视线或动作状态" />
                   </td>
                   <td>
                     <RefImageCell
@@ -442,16 +471,18 @@ export default function ProjectManagement() {
 }
 
 const CONCEPT_GROUPS = [
-  { key: 'characters', label: '角色' },
-  { key: 'locations', label: '场景' },
-  { key: 'props', label: '道具' },
+  { key: 'characters', label: '角色', detailField: 'description' },
+  { key: 'scenes', label: '场景', detailField: 'environment' },
+  { key: 'props', label: '道具', detailField: 'description' },
 ]
 
 function ConceptManagement({ concepts, setConcepts, busy }) {
   const [uploading, setUploading] = useState('')
 
   const addConcept = (type) => {
-    const item = { id: `concept_${Date.now()}`, name: '', description: '', reference_images: [] }
+    const item = type === 'scenes'
+      ? { id: `scene_${Date.now()}`, name: '', time: '', environment: '', reference_images: [] }
+      : { id: `concept_${Date.now()}`, name: '', description: '', reference_images: [] }
     setConcepts((prev) => ({ ...prev, [type]: [...(prev[type] || []), item] }))
   }
 
@@ -489,7 +520,7 @@ function ConceptManagement({ concepts, setConcepts, busy }) {
   return (
     <div className="concept-manager">
       <div className="concept-manager-note">这里只维护角色、场景和道具资料，不调用任何生图或视频模型。</div>
-      {CONCEPT_GROUPS.map(({ key, label }) => (
+      {CONCEPT_GROUPS.map(({ key, label, detailField }) => (
         <section className="concept-group" key={key}>
           <div className="concept-group-header">
             <div><strong>{label}</strong><span>{(concepts[key] || []).length} 项</span></div>
@@ -509,7 +540,10 @@ function ConceptManagement({ concepts, setConcepts, busy }) {
                     </div>
                     <div className="concept-card-fields">
                       <input className="pm-input" value={item.name || ''} onChange={(e) => updateConcept(key, item.id, 'name', e.target.value)} placeholder={`${label}名称`} />
-                      <textarea className="pm-textarea" value={item.description || ''} onChange={(e) => updateConcept(key, item.id, 'description', e.target.value)} rows={4} placeholder={`${label}的稳定视觉描述、身份或环境信息`} />
+                      {key === 'scenes' && (
+                        <input className="pm-input pm-stacked" value={item.time || ''} onChange={(e) => updateConcept(key, item.id, 'time', e.target.value)} placeholder="时间，例如 夜" />
+                      )}
+                      <textarea className="pm-textarea pm-stacked" value={item[detailField] || ''} onChange={(e) => updateConcept(key, item.id, detailField, e.target.value)} rows={4} placeholder={key === 'scenes' ? '稳定环境、空间与氛围设定' : `${label}的稳定视觉描述`} />
                       <div className="concept-card-actions">
                         <label className="ref-mini-btn concept-upload" title="上传参考图">
                           {uploading === itemKey ? <Loader2 size={14} className="spin" /> : <Upload size={14} />}
