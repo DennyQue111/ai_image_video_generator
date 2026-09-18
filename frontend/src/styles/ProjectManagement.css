@@ -222,6 +222,22 @@
   transition: all 0.15s;
 }
 .pm-row-del:hover { background: #2a1414; }
+.pm-row-actions { display: flex; align-items: center; gap: 6px; }
+.pm-row-canvas {
+  background: transparent;
+  border: 1px solid #1f4a6e;
+  color: #60a5fa;
+  border-radius: 6px;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.pm-row-canvas:hover:not(:disabled) { background: #10233b; color: #93c5fd; }
+.pm-row-canvas:disabled { opacity: 0.5; cursor: not-allowed; }
 .pm-row-del-wide {
   width: auto;
   padding: 6px 12px;

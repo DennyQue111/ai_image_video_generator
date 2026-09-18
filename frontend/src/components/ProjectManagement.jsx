@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   FolderOpen, Save, FilePlus, Trash2, ChevronDown, Loader2,
-  Plus, X, Upload, Image as ImageIcon, Clapperboard, Library,
+  Plus, X, Upload, Image as ImageIcon, Clapperboard, Library, Workflow,
 } from 'lucide-react'
 import axios from 'axios'
 import '../styles/ProjectManagement.css'
@@ -36,7 +37,7 @@ const emptyShot = () => ({
   reference_images: [],
 })
 
-const emptyConcepts = () => ({ characters: [], scenes: [], props: [] })
+const emptyConcepts = () => ({ characters: [], locations: [], props: [] })
 
 const toItems = (value, type) => {
   const items = Array.isArray(value)
@@ -54,7 +55,7 @@ const toItems = (value, type) => {
 
 const normalizeConcepts = (value = {}) => ({
   characters: toItems(value.characters, 'characters'),
-  scenes: toItems(value.scenes || value.locations, 'scenes'),
+  locations: toItems(value.locations || value.scenes, 'locations'),
   props: toItems(value.props, 'props'),
 })
 
@@ -98,10 +99,13 @@ const normalizeImportedData = (raw) => {
   const legacyConcepts = source.concepts || raw.concepts || {}
   return {
     name: source.name || source.title || raw.name || '',
+    projectId: source.project_id || raw.project_id || '',
+    projectCode: source.project_code || raw.project_code || '',
+    conceptsFile: source.concepts_file || raw.concepts_file || '',
     shots,
     concepts: normalizeConcepts({
       characters: source.characters || legacyConcepts.characters,
-      scenes: source.scenes || legacyConcepts.scenes || legacyConcepts.locations,
+      locations: source.locations || source.scenes || legacyConcepts.locations || legacyConcepts.scenes,
       props: source.props || legacyConcepts.props,
     }),
   }
@@ -110,26 +114,31 @@ const normalizeImportedData = (raw) => {
 /**
  * 镜头表（分镜表）管理页面
  * - 顶部项目栏：新建/保存/加载/删除（存后端 shot_breakdown 接口）
- * - 数据结构：characters / scenes / props / shots，与导出 JSON 完全一致
+ * - 数据结构：characters / locations / props / shots，与导出 JSON 完全一致
  */
 export default function ProjectManagement() {
+  const navigate = useNavigate()
   const [shots, setShots] = useState([])
   const [concepts, setConcepts] = useState(emptyConcepts)
   const [activeSection, setActiveSection] = useState('shots')
   const [currentName, setCurrentName] = useState('')
+  const [projectMeta, setProjectMeta] = useState({ projectId: '', projectCode: '', conceptsFile: '' })
   const [nameInput, setNameInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [shotBreakdowns, setShotBreakdowns] = useState([])
+  const [conceptFiles, setConceptFiles] = useState([])
+  const [currentConceptName, setCurrentConceptName] = useState('')
   const [open, setOpen] = useState(false)
   const [previewShot, setPreviewShot] = useState(null) // 浏览参考图的镜头
   const dropdownRef = useRef(null)
   const jsonInputRef = useRef(null)
 
-  // 拉取镜头表列表
+  // 镜头表和 Concept 文件分别读取；顶部下拉仅显示当前页签对应的文件。
   const refresh = useCallback(async () => {
     try {
-      const res = await axios.get('/api/shot_breakdowns')
-      if (res.data.success) setShotBreakdowns(res.data.shot_breakdowns || [])
+      const [shotsRes, conceptsRes] = await Promise.all([axios.get('/api/shot_breakdowns'), axios.get('/api/concepts')])
+      if (shotsRes.data.success) setShotBreakdowns(shotsRes.data.shot_breakdowns || [])
+      if (conceptsRes.data.success) setConceptFiles(conceptsRes.data.concepts || [])
     } catch (err) {
       console.error('list shot breakdowns failed', err)
     }
@@ -215,13 +224,18 @@ export default function ProjectManagement() {
       const res = await axios.post('/api/shot_breakdowns/save', {
         name,
         schema_version: 2,
+        project_id: projectMeta.projectId || undefined,
+        project_code: projectMeta.projectCode || undefined,
+        concepts_file: projectMeta.conceptsFile || undefined,
         characters: concepts.characters,
-        scenes: concepts.scenes,
+        locations: concepts.locations,
         props: concepts.props,
         shots,
       })
       if (res.data.success) {
         setCurrentName(res.data.name)
+        setCurrentConceptName(res.data.concepts_file)
+        setProjectMeta({ projectId: res.data.project_id, projectCode: projectMeta.projectCode, conceptsFile: res.data.concepts_file })
         await refresh()
       }
     } catch (err) {
@@ -240,6 +254,8 @@ export default function ProjectManagement() {
         setShots(imported.shots)
         setConcepts(imported.concepts)
         setCurrentName(imported.name || name)
+        setProjectMeta({ projectId: imported.projectId, projectCode: imported.projectCode, conceptsFile: imported.conceptsFile })
+        setCurrentConceptName(imported.conceptsFile || '')
         setOpen(false)
       }
     } catch (err) {
@@ -254,17 +270,30 @@ export default function ProjectManagement() {
     setShots([])
     setConcepts(emptyConcepts())
     setCurrentName('')
+    setProjectMeta({ projectId: '', projectCode: '', conceptsFile: '' })
+    setCurrentConceptName('')
   }
 
   const handleDelete = async () => {
-    if (!currentName) return
-    if (!confirm(`确定删除镜头表「${currentName}」吗？此操作不可恢复。`)) return
+    const isConcepts = activeSection === 'concepts'
+    const targetName = isConcepts ? currentConceptName : currentName
+    if (!targetName) return
+    if (!confirm(`确定删除${isConcepts ? ' Concept 表' : '镜头表'}「${targetName}」吗？此操作不可恢复。`)) return
     setBusy(true)
     try {
-      await axios.delete(`/api/shot_breakdowns/${encodeURIComponent(currentName)}`)
-      setShots([])
-      setConcepts(emptyConcepts())
-      setCurrentName('')
+      if (isConcepts) {
+        await axios.delete(`/api/concepts/${encodeURIComponent(targetName)}`)
+        setConcepts(emptyConcepts())
+        setCurrentConceptName('')
+        setProjectMeta((prev) => ({ ...prev, conceptsFile: '' }))
+      } else {
+        await axios.delete(`/api/shot_breakdowns/${encodeURIComponent(targetName)}`)
+        setShots([])
+        setConcepts(emptyConcepts())
+        setCurrentName('')
+        setProjectMeta({ projectId: '', projectCode: '', conceptsFile: '' })
+        setCurrentConceptName('')
+      }
       await refresh()
     } catch (err) {
       alert('删除失败: ' + formatErr(err))
@@ -280,11 +309,66 @@ export default function ProjectManagement() {
       setShots(imported.shots)
       setConcepts(imported.concepts)
       setCurrentName('')
+      setProjectMeta({ projectId: imported.projectId, projectCode: imported.projectCode, conceptsFile: imported.conceptsFile })
       setNameInput(imported.name || file.name.replace(/\.json$/i, ''))
     } catch (err) {
       alert('导入失败：不是有效的镜头表 JSON。\n' + formatErr(err))
     } finally {
       if (jsonInputRef.current) jsonInputRef.current.value = ''
+    }
+  }
+
+  const handleLoadConcepts = async (name) => {
+    setBusy(true)
+    try {
+      const res = await axios.get(`/api/concepts/${encodeURIComponent(name)}`)
+      if (res.data.success && res.data.concepts) {
+        const source = res.data.concepts
+        setConcepts(normalizeConcepts(source))
+        setProjectMeta((prev) => ({
+          projectId: source.project_id || prev.projectId,
+          projectCode: source.project_code || prev.projectCode,
+          conceptsFile: source.name || name,
+        }))
+        setCurrentConceptName(source.name || name)
+        setOpen(false)
+      }
+    } catch (err) {
+      alert('加载失败: ' + formatErr(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // 镜头入口创建普通自由画布项目；首次创建时后端按 project_id 从 concepts 准备角色和 Location 参考图。
+  const handleOpenShotCanvas = async (shot) => {
+    if (!currentName) {
+      alert('请先保存或加载镜头表，才能创建对应镜头的自由画布。')
+      return
+    }
+    const shotId = shot.id || shot.shot_no
+    const projectName = shot.shot_no?.trim()
+    if (!shotId || !projectName) return alert('请先填写镜头号。')
+
+    setBusy(true)
+    try {
+      // 已有同镜头号的自由画布项目时直接打开，避免覆盖用户已做的节点和连线。
+      try {
+        const existing = await axios.get(`/api/projects/${encodeURIComponent(projectName)}`)
+        if (existing.data.success) {
+          navigate(`/free_canvas?project=${encodeURIComponent(projectName)}`)
+          return
+        }
+      } catch (err) {
+        if (err?.response?.status !== 404) throw err
+      }
+      const prepared = await axios.post(`/api/shot_breakdowns/${encodeURIComponent(currentName)}/shots/${encodeURIComponent(shotId)}/canvas/ensure`)
+      await axios.post('/api/projects/save', { name: projectName, ...(prepared.data.canvas || { nodes: [], edges: [] }) })
+      navigate(`/free_canvas?project=${encodeURIComponent(projectName)}`)
+    } catch (err) {
+      alert('创建镜头自由画布失败: ' + formatErr(err))
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -319,14 +403,14 @@ export default function ProjectManagement() {
           </button>
           {open && (
             <div className="project-dropdown">
-              {shotBreakdowns.length === 0 && (
-                <div className="project-dropdown-empty">暂无已保存镜头表</div>
+              {(activeSection === 'shots' ? shotBreakdowns : conceptFiles).length === 0 && (
+                <div className="project-dropdown-empty">暂无已保存{activeSection === 'shots' ? '镜头表' : 'Concept 表'}</div>
               )}
-              {shotBreakdowns.map((s) => (
+              {(activeSection === 'shots' ? shotBreakdowns : conceptFiles).map((s) => (
                 <div
                   key={s.name}
-                  className={`project-dropdown-item ${s.name === currentName ? 'active' : ''}`}
-                  onClick={() => handleLoad(s.name)}
+                  className={`project-dropdown-item ${s.name === (activeSection === 'shots' ? currentName : currentConceptName) ? 'active' : ''}`}
+                  onClick={() => activeSection === 'shots' ? handleLoad(s.name) : handleLoadConcepts(s.name)}
                 >
                   <div className="project-dropdown-name">{s.name}</div>
                   <div className="project-dropdown-meta">
@@ -337,22 +421,24 @@ export default function ProjectManagement() {
             </div>
           )}
         </div>
-        {currentName && (
-          <button className="project-btn project-btn-danger" onClick={handleDelete} disabled={busy} title="删除当前镜头表">
+        {(activeSection === 'concepts' ? currentConceptName : currentName) && (
+          <button className="project-btn project-btn-danger" onClick={handleDelete} disabled={busy} title={`删除当前${activeSection === 'concepts' ? ' Concept 表' : '镜头表'}`}>
             <Trash2 size={16} />
           </button>
         )}
         <div style={{ flex: 1 }} />
         <div className="project-bar-title">
-          {currentName ? `当前镜头表：${currentName}` : '未保存镜头表'}
+          {activeSection === 'concepts'
+            ? (currentConceptName ? `当前 Concept 表：${currentConceptName}` : '未选择 Concept 表')
+            : (currentName ? `当前镜头表：${currentName}` : '未保存镜头表')}
         </div>
       </div>
 
       <div className="pm-section-tabs">
-        <button className={`pm-section-tab ${activeSection === 'shots' ? 'active' : ''}`} onClick={() => setActiveSection('shots')}>
+        <button className={`pm-section-tab ${activeSection === 'shots' ? 'active' : ''}`} onClick={() => { setActiveSection('shots'); setOpen(false) }}>
           <Clapperboard size={16} /> 镜头表
         </button>
-        <button className={`pm-section-tab ${activeSection === 'concepts' ? 'active' : ''}`} onClick={() => setActiveSection('concepts')}>
+        <button className={`pm-section-tab ${activeSection === 'concepts' ? 'active' : ''}`} onClick={() => { setActiveSection('concepts'); setOpen(false) }}>
           <Library size={16} /> Concept 表
         </button>
       </div>
@@ -384,7 +470,7 @@ export default function ProjectManagement() {
                 <th style={{ minWidth: 180 }}>角色 / 对白</th>
                 <th style={{ minWidth: 180 }}>连续性</th>
                 <th style={{ width: 180 }}>参考图</th>
-                <th style={{ width: 60 }}>操作</th>
+                <th style={{ width: 96 }}>操作</th>
               </tr>
             </thead>
             <tbody>
@@ -446,9 +532,14 @@ export default function ProjectManagement() {
                     />
                   </td>
                   <td>
-                    <button className="pm-row-del" onClick={() => removeShot(shot.id)} title="删除该镜头">
-                      <X size={16} />
-                    </button>
+                    <div className="pm-row-actions">
+                      <button className="pm-row-canvas" onClick={() => handleOpenShotCanvas(shot)} disabled={busy} title="创建或打开此镜头的自由画布项目">
+                        <Workflow size={15} />
+                      </button>
+                      <button className="pm-row-del" onClick={() => removeShot(shot.id)} title="删除该镜头">
+                        <X size={16} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -478,7 +569,7 @@ export default function ProjectManagement() {
 
 const CONCEPT_GROUPS = [
   { key: 'characters', label: '角色', detailField: 'description' },
-  { key: 'scenes', label: '场景', detailField: 'environment' },
+  { key: 'locations', label: 'Location', detailField: 'environment' },
   { key: 'props', label: '道具', detailField: 'description' },
 ]
 
@@ -486,7 +577,7 @@ function ConceptManagement({ concepts, setConcepts, busy }) {
   const [uploading, setUploading] = useState('')
 
   const addConcept = (type) => {
-    const item = type === 'scenes'
+    const item = type === 'locations'
       ? { id: `scene_${Date.now()}`, name: '', time: '', environment: '', reference_images: [] }
       : { id: `concept_${Date.now()}`, name: '', description: '', reference_images: [] }
     setConcepts((prev) => ({ ...prev, [type]: [...(prev[type] || []), item] }))
@@ -546,10 +637,10 @@ function ConceptManagement({ concepts, setConcepts, busy }) {
                     </div>
                     <div className="concept-card-fields">
                       <input className="pm-input" value={item.name || ''} onChange={(e) => updateConcept(key, item.id, 'name', e.target.value)} placeholder={`${label}名称`} />
-                      {key === 'scenes' && (
+                      {key === 'locations' && (
                         <input className="pm-input pm-stacked" value={item.time || ''} onChange={(e) => updateConcept(key, item.id, 'time', e.target.value)} placeholder="时间，例如 夜" />
                       )}
-                      <textarea className="pm-textarea pm-stacked" value={item[detailField] || ''} onChange={(e) => updateConcept(key, item.id, detailField, e.target.value)} rows={4} placeholder={key === 'scenes' ? '稳定环境、空间与氛围设定' : `${label}的稳定视觉描述`} />
+                      <textarea className="pm-textarea pm-stacked" value={item[detailField] || ''} onChange={(e) => updateConcept(key, item.id, detailField, e.target.value)} rows={4} placeholder={key === 'locations' ? '稳定环境、空间与氛围设定' : `${label}的稳定视觉描述`} />
                       <div className="concept-card-actions">
                         <label className="ref-mini-btn concept-upload" title="上传参考图">
                           {uploading === itemKey ? <Loader2 size={14} className="spin" /> : <Upload size={14} />}

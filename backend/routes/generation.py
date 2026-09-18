@@ -1361,15 +1361,16 @@ import re as _re
 # /static/projects/<相对路径> 的引用前缀
 _STATIC_PREFIX = "/static/projects/"
 
-# 存放引用 uploads 文件的 JSON 目录（画布项目 + 镜头表）
+# 存放引用 uploads 文件的 JSON 目录（独立自由画布 + 镜头表内嵌画布 + concepts）
 _REF_JSON_DIRS = [
-    Path(PROJECT_FILE_PATH) / "_temp" / "projects",
+    Path(PROJECT_FILE_PATH) / "_temp" / "freeCanvas",
     Path(PROJECT_FILE_PATH) / "_temp" / "shotbreakdown",
+    Path(PROJECT_FILE_PATH) / "_temp" / "concepts",
 ]
 
 
 def _collect_referenced_rel_paths() -> set:
-    """扫描所有画布项目/镜头表 JSON，收集被引用的文件相对路径（相对 PROJECT_FILE_PATH）。
+    """扫描所有镜头表/concepts JSON，收集被引用的文件相对路径（相对 PROJECT_FILE_PATH）。
 
     匹配 JSON 文本里所有 /static/projects/xxx 形式的字符串，提取 xxx 部分。
     """

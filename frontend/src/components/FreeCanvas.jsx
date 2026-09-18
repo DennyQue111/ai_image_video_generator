@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import ReactFlow, { Background, Controls, MiniMap } from 'reactflow'
 import axios from 'axios'
 import 'reactflow/dist/style.css'
@@ -32,6 +33,9 @@ function formatErr(err) {
 }
 
 export default function FreeCanvas() {
+  const routerLocation = useLocation()
+  const openedShotRef = useRef(null)
+  const openedProjectRef = useRef(null)
   const {
     nodes,
     edges,
@@ -55,7 +59,7 @@ export default function FreeCanvas() {
   } = useCanvasElements()
 
   const [loading, setLoading] = useState(false)
-  const [currentProject, setCurrentProject] = useState(null) // 当前项目名（null=未保存）
+  const [currentProject, setCurrentProject] = useState(null)
 
   const handleModelUpload = async (file) => {
     setLoading(true)
@@ -144,41 +148,60 @@ export default function FreeCanvas() {
     }
   }
 
-  // 保存项目
-  const handleSaveProject = async (name) => {
-    const data = toSaveData()
-    const res = await axios.post('/api/projects/save', { name, ...data })
-    if (res.data.success) {
-      setCurrentProject(res.data.name)
-    }
+  const restoreCanvas = (canvas) => {
+    loadFromData(canvas)
+    // JSON 不保存函数；恢复相机节点时重新绑定生成回调。
+    setTimeout(() => setNodes((existing) => existing.map((node) => node.type === 'cameraNode'
+      ? { ...node, data: { ...node.data, onGenerate: handleCameraGenerate } }
+      : node)), 0)
   }
 
-  // 加载项目
+  // 从镜头表进入时，画布绑定于该镜头 JSON，而不是独立的 project 文件。
+  useEffect(() => {
+    const params = new URLSearchParams(routerLocation.search)
+    const breakdown = params.get('shot_breakdown')
+    const shotId = params.get('shot')
+    const key = breakdown && shotId ? `${breakdown}/${shotId}` : null
+    if (!key || openedShotRef.current === key) return
+    openedShotRef.current = key
+    axios.get(`/api/shot_breakdowns/${encodeURIComponent(breakdown)}/shots/${encodeURIComponent(shotId)}/canvas`).then((res) => {
+      restoreCanvas(res.data.canvas)
+      setCurrentProject(res.data.shot?.shot_no || shotId)
+    }).catch((err) => {
+      openedShotRef.current = null
+      alert('打开镜头自由画布失败: ' + formatErr(err))
+    })
+  }, [routerLocation.search])
+
+  // 普通自由画布项目与镜头画布完全独立，仍可随时保存、打开和删除。
+  const handleSaveProject = async (name) => {
+    const res = await axios.post('/api/projects/save', { name, ...toSaveData() })
+    if (res.data.success) setCurrentProject(res.data.name)
+  }
+
   const handleLoadProject = async (name) => {
     const res = await axios.get(`/api/projects/${encodeURIComponent(name)}`)
     if (res.data.success && res.data.project) {
-      loadFromData(res.data.project)
-      // 项目文件不保存函数；恢复相机节点时重新绑定其生成回调。
-      setTimeout(() => {
-        setNodes((existing) => existing.map((node) => node.type === 'cameraNode'
-          ? { ...node, data: { ...node.data, onGenerate: handleCameraGenerate } }
-          : node))
-      }, 0)
+      restoreCanvas(res.data.project)
       setCurrentProject(res.data.project.name || name)
     }
   }
 
-  // 新建项目（清空画布）
-  const handleNewProject = async () => {
+  const handleNewProject = () => {
     clearAll()
     setCurrentProject(null)
   }
 
-  // 删除当前项目后清空
-  const handleDeletedProject = async () => {
-    clearAll()
-    setCurrentProject(null)
-  }
+  // 保留以前的 /free_canvas?project=项目名 直接打开方式。
+  useEffect(() => {
+    const projectName = new URLSearchParams(routerLocation.search).get('project')
+    if (!projectName || openedProjectRef.current === projectName) return
+    openedProjectRef.current = projectName
+    handleLoadProject(projectName).catch((err) => {
+      openedProjectRef.current = null
+      alert('打开自由画布项目失败: ' + formatErr(err))
+    })
+  }, [routerLocation.search])
 
   // 文生图：调用后端 → 结果加到画布中央
   const handleTextToImage = async (prompt, model = 'comfyui-flux2', width = 1024, height = 1024) => {
@@ -702,13 +725,12 @@ export default function FreeCanvas() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', overflow: 'hidden' }}>
-      {/* 顶部项目栏 */}
       <ProjectBar
         currentName={currentProject}
         onSave={handleSaveProject}
         onLoad={handleLoadProject}
         onNew={handleNewProject}
-        onDelete={handleDeletedProject}
+        onDelete={handleNewProject}
       />
 
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
