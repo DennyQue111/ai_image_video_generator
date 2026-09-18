@@ -26,6 +26,7 @@ const emptyShot = () => ({
   id: genShotId(),
   shot_no: '',
   scene: '',
+  location: '',
   duration: '',
   characters: [],
   camera: { framing: '', lens: '', height: '', movement: '' },
@@ -79,6 +80,7 @@ const normalizeImportedData = (raw) => {
       id: shot.id || genShotId(),
       shot_no: shot.shot_no || shot.shot_number || '',
       scene: shot.scene || shot.scene_number || '',
+      location: shot.location || '',
       duration: shot.duration ?? shot.duration_seconds ?? '',
       characters: Array.isArray(shot.characters) ? shot.characters : [],
       camera: {
@@ -372,7 +374,8 @@ export default function ProjectManagement() {
           <table className="pm-table">
             <thead>
               <tr>
-                <th style={{ width: 90 }}>场景 ID</th>
+                <th style={{ width: 90 }}>场次代号</th>
+                <th style={{ width: 150 }}>Location ID</th>
                 <th style={{ width: 80 }}>镜头号</th>
                 <th style={{ width: 70 }}>时长</th>
                 <th style={{ width: 180 }}>镜头构图</th>
@@ -389,6 +392,9 @@ export default function ProjectManagement() {
                 <tr key={shot.id}>
                   <td>
                     <input className="pm-input pm-input-sm" value={shot.scene || ''} onChange={(e) => updateShot(shot.id, 'scene', e.target.value)} placeholder="SAE" />
+                  </td>
+                  <td>
+                    <input className="pm-input pm-input-sm" value={shot.location || ''} onChange={(e) => updateShot(shot.id, 'location', e.target.value)} placeholder="loc_slum_t_intersection" />
                   </td>
                   <td>
                     <input
