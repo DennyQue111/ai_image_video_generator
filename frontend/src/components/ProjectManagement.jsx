@@ -132,6 +132,7 @@ export default function ProjectManagement() {
   const [currentConceptName, setCurrentConceptName] = useState('')
   const [open, setOpen] = useState(false)
   const [previewShot, setPreviewShot] = useState(null) // 浏览参考图的镜头
+  const [previewConcept, setPreviewConcept] = useState(null)
   const [cacheReady, setCacheReady] = useState(false)
   const dropdownRef = useRef(null)
   const jsonInputRef = useRef(null)
@@ -413,6 +414,36 @@ export default function ProjectManagement() {
     }
   }
 
+  const handleOpenConceptCanvas = async (concept) => {
+    const projectName = concept.id?.trim()
+    if (!projectName) return alert('请先填写 Concept ID，才能创建对应自由画布项目。')
+    setBusy(true)
+    try {
+      try {
+        const existing = await axios.get(`/api/projects/${encodeURIComponent(projectName)}`)
+        if (existing.data.success) {
+          navigate(`/free_canvas?project=${encodeURIComponent(projectName)}`)
+          return
+        }
+      } catch (err) {
+        if (err?.response?.status !== 404) throw err
+      }
+      const urls = concept.reference_images?.length ? concept.reference_images : (concept.image_url ? [concept.image_url] : [])
+      const nodes = urls.filter(Boolean).map((src, index) => ({
+        id: `concept_${Date.now()}_${index}`,
+        type: 'imageNode',
+        position: { x: 100 + index * 290, y: 140 },
+        data: { src, width: 256, height: 256, mediaType: 'image', sourceKind: 'Concept', sourceName: concept.name || projectName },
+      }))
+      await axios.post('/api/projects/save', { name: projectName, nodes, edges: [] })
+      navigate(`/free_canvas?project=${encodeURIComponent(projectName)}`)
+    } catch (err) {
+      alert('创建 Concept 自由画布失败: ' + formatErr(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <div className="pm-page">
       {/* 顶部项目栏 */}
@@ -591,17 +622,25 @@ export default function ProjectManagement() {
       </>}
 
       {activeSection === 'concepts' && (
-        <ConceptManagement concepts={concepts} setConcepts={setConcepts} busy={busy} />
+        <ConceptManagement concepts={concepts} setConcepts={setConcepts} busy={busy} onPreview={setPreviewConcept} onOpenCanvas={handleOpenConceptCanvas} />
       )}
 
       {/* 参考图浏览弹窗 */}
       {previewShot && (
-        <RefImageModal shot={previewShot} onClose={() => setPreviewShot(null)} onRemove={(i) => {
+        <RefImageModal item={previewShot} title={previewShot.shot_no || '镜头'} onClose={() => setPreviewShot(null)} onRemove={(i) => {
           removeRefImage(previewShot.id, i)
           setPreviewShot((prev) => prev ? {
             ...prev,
             reference_images: (prev.reference_images || []).filter((_, idx) => idx !== i),
           } : prev)
+        }} />
+      )}
+      {previewConcept && (
+        <RefImageModal item={previewConcept.item} title={previewConcept.item.name || previewConcept.item.id || 'Concept'} onClose={() => setPreviewConcept(null)} onRemove={(i) => {
+          const { type, item } = previewConcept
+          const nextImages = (item.reference_images || []).filter((_, index) => index !== i)
+          setConcepts((prev) => ({ ...prev, [type]: (prev[type] || []).map((entry) => entry.id === item.id ? { ...entry, reference_images: nextImages } : entry) }))
+          setPreviewConcept((prev) => prev ? { ...prev, item: { ...prev.item, reference_images: nextImages } } : prev)
         }} />
       )}
     </div>
@@ -614,7 +653,7 @@ const CONCEPT_GROUPS = [
   { key: 'props', label: '道具', detailField: 'description' },
 ]
 
-function ConceptManagement({ concepts, setConcepts, busy }) {
+function ConceptManagement({ concepts, setConcepts, busy, onPreview, onOpenCanvas }) {
   const [uploading, setUploading] = useState('')
 
   const addConcept = (type) => {
@@ -673,11 +712,15 @@ function ConceptManagement({ concepts, setConcepts, busy }) {
                 const itemKey = `${key}_${item.id}`
                 return (
                   <article className="concept-card-simple" key={item.id || index}>
-                    <div className="concept-card-image">
-                      {images[0] ? <img src={images[0]} alt={item.name || label} /> : <ImageIcon size={30} />}
+                    <div className="concept-card-image concept-card-thumbs">
+                      {images.length ? images.slice(0, 4).map((url, imageIndex) => <img key={url + imageIndex} src={url} alt={item.name || label} />) : <ImageIcon size={30} />}
+                      {images.length > 4 && <span className="concept-thumb-more">+{images.length - 4}</span>}
                     </div>
                     <div className="concept-card-fields">
-                      <input className="pm-input" value={item.name || ''} onChange={(e) => updateConcept(key, item.id, 'name', e.target.value)} placeholder={`${label}名称`} />
+                      <div className="concept-id-name-fields">
+                        <input className="pm-input" value={item.id || ''} onChange={(e) => updateConcept(key, item.id, 'id', e.target.value)} placeholder={`${label} ID`} />
+                        <input className="pm-input" value={item.name || ''} onChange={(e) => updateConcept(key, item.id, 'name', e.target.value)} placeholder={`${label}名称`} />
+                      </div>
                       {key === 'locations' && (
                         <input className="pm-input pm-stacked" value={item.time || ''} onChange={(e) => updateConcept(key, item.id, 'time', e.target.value)} placeholder="时间，例如 夜" />
                       )}
@@ -687,6 +730,8 @@ function ConceptManagement({ concepts, setConcepts, busy }) {
                           {uploading === itemKey ? <Loader2 size={14} className="spin" /> : <Upload size={14} />}
                           <input type="file" accept="image/*" multiple hidden disabled={!!uploading} onChange={(e) => uploadConceptImages(key, item, e.target.files)} />
                         </label>
+                        {images.length > 0 && <button className="ref-mini-btn" onClick={() => onPreview({ type: key, item })} title="浏览全部参考图"><ImageIcon size={14} /></button>}
+                        <button className="pm-row-canvas" onClick={() => onOpenCanvas(item)} disabled={busy || !item.id?.trim()} title="创建或打开此 Concept 的自由画布项目"><Workflow size={14} /></button>
                         <span>{images.length ? `${images.length} 张参考图` : '无参考图'}</span>
                         <button className="pm-row-del" onClick={() => removeConcept(key, item.id)} title={`删除${label}`}><Trash2 size={14} /></button>
                       </div>
@@ -757,8 +802,8 @@ function RefImageCell({ shot, onUpload, onPreview, onRemove, busy }) {
 /**
  * 参考图浏览弹窗：大图轮播 + 删除
  */
-function RefImageModal({ shot, onClose, onRemove }) {
-  const imgs = shot.reference_images || []
+function RefImageModal({ item, title, onClose, onRemove }) {
+  const imgs = item.reference_images || []
   const [idx, setIdx] = useState(0)
   const cur = imgs[idx]
 
@@ -769,7 +814,7 @@ function RefImageModal({ shot, onClose, onRemove }) {
     <div className="ref-modal-overlay" onClick={onClose}>
       <div className="ref-modal" onClick={(e) => e.stopPropagation()}>
         <div className="ref-modal-header">
-          <span>{shot.shot_no || '镜头'} 的参考图（{idx + 1}/{imgs.length}）</span>
+          <span>{title} 的参考图（{idx + 1}/{imgs.length}）</span>
           <button className="ref-modal-close" onClick={onClose}><X size={18} /></button>
         </div>
         {cur ? (
