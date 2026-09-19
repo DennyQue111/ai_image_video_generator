@@ -58,6 +58,29 @@ def _legacy_concepts_name(shot_name: str):
     return candidate if candidate != shot_name and _path(CONCEPTS_DIR, candidate).exists() else None
 
 
+def _find_breakdown_by_project_id(project_id: str) -> tuple[dict, Path]:
+    """按 project_id 找镜头表；兼容旧文件的 legacy:<镜头表名> 标识。"""
+    legacy_name = project_id.removeprefix("legacy:") if project_id.startswith("legacy:") else None
+    for path in SHOT_BREAKDOWN_DIR.glob("*.json"):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if data.get("project_id") == project_id or (legacy_name and path.stem == legacy_name):
+            return data, path
+    raise HTTPException(status_code=404, detail=f"未找到 project_id 对应的镜头表: {project_id}")
+
+
+def get_project_shot(project_id: str, shot_id: str) -> tuple[dict, dict, dict]:
+    """供视频提示词接口复用：返回镜头表、镜头和关联的 Concepts。"""
+    data, path = _find_breakdown_by_project_id(project_id)
+    shot = _get_shot(data, shot_id)
+    concepts, _ = _find_concepts(data.get("project_id"), data.get("concepts_file"))
+    if concepts is None:
+        concepts, _ = _find_concepts(None, _legacy_concepts_name(path.stem))
+    return data, shot, concepts or {}
+
+
 class SaveShotBreakdownRequest(BaseModel):
     name: str
     schema_version: int = 2
@@ -95,6 +118,30 @@ async def list_shot_breakdowns():
         items.append({"name": file.stem, "filename": file.name, "size": stat.st_size,
                       "updated_at": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S")})
     return {"success": True, "shot_breakdowns": items}
+
+
+@router.get("/api/shot_breakdowns/projects")
+async def list_shot_projects():
+    """供镜头表生成视频选择器使用，返回每个镜头表的 project_id。"""
+    projects = []
+    for path in SHOT_BREAKDOWN_DIR.glob("*.json"):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        project_id = data.get("project_id") or f"legacy:{path.stem}"
+        projects.append({"project_id": project_id, "project_name": data.get("project_name") or data.get("name", path.stem),
+                         "project_code": data.get("project_code", ""), "shot_breakdown": path.stem,
+                         "shot_count": len(data.get("shots", []))})
+    return {"success": True, "projects": projects}
+
+
+@router.get("/api/shot_breakdowns/projects/{project_id}/shots")
+async def list_project_shots(project_id: str):
+    data, _ = _find_breakdown_by_project_id(project_id)
+    shots = [{"id": item.get("id", ""), "shot_no": item.get("shot_no", item.get("id", "")),
+              "scene": item.get("scene", ""), "duration": item.get("duration", "")} for item in data.get("shots", [])]
+    return {"success": True, "project_id": project_id, "shots": shots}
 
 
 @router.get("/api/concepts")

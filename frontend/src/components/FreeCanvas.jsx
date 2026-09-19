@@ -706,8 +706,8 @@ export default function FreeCanvas() {
   }
 
   // 图生视频：选中图片 → 生成视频 → 自动连线
-  const handleImageToVideo = async (prompt, duration = 5, aspect = '16:9', modelType = 'pruned') => {
-    const imgs = selectedElements.length > 0 ? selectedElements : selectedElement ? [selectedElement] : []
+  const handleImageToVideo = async (prompt, duration = 5, aspect = '16:9', modelType = 'pruned', referenceElements = null) => {
+    const imgs = referenceElements?.length ? referenceElements : (selectedElements.length > 0 ? selectedElements : selectedElement ? [selectedElement] : [])
     if (imgs.length === 0) return
     if (imgs.length > 9) {
       alert('最多支持 9 张参考图，请减少选中数量')

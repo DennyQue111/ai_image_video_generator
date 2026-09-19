@@ -50,6 +50,16 @@ export default function RightPanel({
   const [i2vAspect, setI2vAspect] = useState('16:9')
   // 图生视频：模型版本选择（pruned 截肢版 | int8 完整版）
   const [i2vModel, setI2vModel] = useState('pruned')
+  const [i2vSubTab, setI2vSubTab] = useState('preset')
+  const [shotProjects, setShotProjects] = useState([])
+  const [shotProjectId, setShotProjectId] = useState('')
+  const [shotOptions, setShotOptions] = useState([])
+  const [shotId, setShotId] = useState('')
+  const [characterRefId, setCharacterRefId] = useState('')
+  const [frameRefId, setFrameRefId] = useState('')
+  const [shotVideoPrompt, setShotVideoPrompt] = useState('')
+  const [shotVideoDuration, setShotVideoDuration] = useState(5)
+  const [shotLoading, setShotLoading] = useState(false)
   const [showInpaint, setShowInpaint] = useState(false)
 
   // 源文件真实分辨率
@@ -76,7 +86,55 @@ export default function RightPanel({
     }
   }, [selectedElement?.src])
 
+  useEffect(() => {
+    if (i2vSubTab !== 'shot') return
+    axios.get('/api/shot_breakdowns/projects').then((res) => {
+      const items = res.data.projects || []
+      setShotProjects(items)
+      setShotProjectId((value) => value || items[0]?.project_id || '')
+    }).catch((err) => console.error('load shot projects failed', err))
+  }, [i2vSubTab])
+
+  useEffect(() => {
+    if (!shotProjectId) { setShotOptions([]); setShotId(''); return }
+    axios.get(`/api/shot_breakdowns/projects/${encodeURIComponent(shotProjectId)}/shots`).then((res) => {
+      const items = res.data.shots || []
+      setShotOptions(items)
+      setShotId(items[0]?.id || '')
+    }).catch((err) => { console.error('load project shots failed', err); setShotOptions([]); setShotId('') })
+  }, [shotProjectId])
+
+  useEffect(() => {
+    const imageIds = selectedElements.filter((item) => item.type === 'image').map((item) => item.id)
+    setCharacterRefId((value) => imageIds.includes(value) ? value : (imageIds[0] || ''))
+    setFrameRefId((value) => imageIds.includes(value) && value !== imageIds[0] ? value : (imageIds[1] || ''))
+  }, [selectedElements])
+
   const multiCount = selectedElements.length
+  const selectedImageElements = selectedElements.filter((item) => item.type === 'image')
+  const characterRef = selectedImageElements.find((item) => item.id === characterRefId)
+  const frameRef = selectedImageElements.find((item) => item.id === frameRefId)
+
+  const generateShotPrompt = async () => {
+    if (!shotProjectId || !shotId) return alert('请先选择项目和镜头。')
+    if (!characterRef || !frameRef || characterRef.id === frameRef.id) return alert('请在画布中选中两张不同图片，并分别指定人物概念图和镜头参考帧。')
+    setShotLoading(true)
+    try {
+      const res = await axios.post('/api/shot-video-prompt', {
+        project_id: shotProjectId,
+        shot_id: shotId,
+        reference_images: [characterRef.src, frameRef.src],
+      })
+      if (res.data.success) {
+        setShotVideoPrompt(res.data.prompt || '')
+        setShotVideoDuration(res.data.duration || 5)
+      }
+    } catch (err) {
+      alert('镜头提示词生成失败: ' + (err?.response?.data?.detail || err.message))
+    } finally {
+      setShotLoading(false)
+    }
+  }
 
   // 图生图分辨率预设（单位：像素 px），与文生图一致
   const i2iPresets = [
@@ -574,6 +632,11 @@ export default function RightPanel({
       {/* 图生视频 Tab */}
       {activeTab === 'i2v' && (
         <div>
+          <div className="right-panel-subtabs">
+            <div className={`right-panel-subtab ${i2vSubTab === 'preset' ? 'active' : ''}`} onClick={() => setI2vSubTab('preset')}>预设</div>
+            <div className={`right-panel-subtab ${i2vSubTab === 'shot' ? 'active' : ''}`} onClick={() => setI2vSubTab('shot')}>镜头表生成</div>
+          </div>
+          {i2vSubTab === 'preset' && <>
           {/* 选中数量提示 */}
           <div style={{
             padding: '6px 10px',
@@ -686,6 +749,47 @@ export default function RightPanel({
           >
             <Video size={16} /> {loading ? '生成中...' : (multiCount > 1 ? `多图生视频（${multiCount} 张）` : '图生视频')}
           </button>
+          </>}
+
+          {i2vSubTab === 'shot' && (
+            <div>
+              <div style={{ color: '#aaa', fontSize: 12, lineHeight: 1.55, marginBottom: 8 }}>
+                选择项目和镜头后，Qwen3-VL:8b 将读取该镜头 JSON，并结合两张指定参考图生成 MiniMax H3 提示词。
+              </div>
+              <div className="panel-label">项目（project_id）</div>
+              <select className="canvas-input" value={shotProjectId} onChange={(e) => setShotProjectId(e.target.value)} style={{ marginTop: 4 }}>
+                {shotProjects.length === 0 && <option value="">暂无镜头表项目</option>}
+                {shotProjects.map((project) => <option key={project.project_id} value={project.project_id}>{project.project_id} · {project.project_name}（{project.shot_count} 镜）</option>)}
+              </select>
+              <div className="panel-label" style={{ marginTop: 8 }}>镜头</div>
+              <select className="canvas-input" value={shotId} onChange={(e) => setShotId(e.target.value)} style={{ marginTop: 4 }} disabled={!shotProjectId}>
+                {shotOptions.length === 0 && <option value="">暂无镜头</option>}
+                {shotOptions.map((shot) => <option key={shot.id} value={shot.id}>{shot.shot_no}{shot.scene ? ` · ${shot.scene}` : ''}{shot.duration ? ` · ${shot.duration}s` : ''}</option>)}
+              </select>
+              <div className="panel-label" style={{ marginTop: 10 }}>画布参考图（需先选中两张图片）</div>
+              <select className="canvas-input" value={characterRefId} onChange={(e) => setCharacterRefId(e.target.value)} disabled={selectedImageElements.length < 2} style={{ marginTop: 4 }}>
+                <option value="">人物概念图</option>
+                {selectedImageElements.map((image, index) => <option key={image.id} value={image.id}>人物概念图：图片 {index + 1}</option>)}
+              </select>
+              <select className="canvas-input" value={frameRefId} onChange={(e) => setFrameRefId(e.target.value)} disabled={selectedImageElements.length < 2} style={{ marginTop: 4 }}>
+                <option value="">镜头参考帧</option>
+                {selectedImageElements.map((image, index) => <option key={image.id} value={image.id}>镜头参考帧：图片 {index + 1}</option>)}
+              </select>
+              <div style={{ color: selectedImageElements.length === 2 ? '#7dd3fc' : '#f59e0b', fontSize: 11, marginTop: 5 }}>
+                当前选中 {selectedImageElements.length} 张图片；需要两张不同的图片。
+              </div>
+              <button className="canvas-btn" style={{ width: '100%', marginTop: 8, justifyContent: 'center', background: '#1a1a2e', color: '#fff', border: '1px solid #3a3a5a' }} disabled={shotLoading || !shotId || selectedImageElements.length < 2} onClick={generateShotPrompt}>
+                {shotLoading ? 'Qwen3 生成中...' : '生成镜头视频提示词'}
+              </button>
+              <div className="panel-label" style={{ marginTop: 10 }}>MiniMax 提示词（可编辑）</div>
+              <textarea className="canvas-textarea" rows={8} value={shotVideoPrompt} onChange={(e) => setShotVideoPrompt(e.target.value)} placeholder="生成后可在这里检查或编辑提示词" style={{ marginTop: 4 }} />
+              <div className="panel-label" style={{ marginTop: 8 }}>视频时长</div>
+              <input className="canvas-input" type="number" min={2} max={15} value={shotVideoDuration} onChange={(e) => setShotVideoDuration(Math.max(2, Math.min(15, Number(e.target.value) || 5)))} style={{ marginTop: 4 }} />
+              <button className="canvas-btn canvas-btn-success" style={{ width: '100%', marginTop: 8, justifyContent: 'center' }} disabled={loading || !shotVideoPrompt.trim() || !characterRef || !frameRef || characterRef.id === frameRef.id} onClick={() => onImageToVideo(shotVideoPrompt, shotVideoDuration, '16:9', 'int8', [characterRef, frameRef])}>
+                <Video size={16} /> {loading ? '生成中...' : '使用 MiniMax INT8 生成镜头视频'}
+              </button>
+            </div>
+          )}
         </div>
       )}
 

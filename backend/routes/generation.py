@@ -19,6 +19,7 @@ from services.comfyui_client import get_comfyui_client
 from services.google_ai_client import GoogleAIClient
 from services.llm_vision_service import LLMVisionService
 from services.style_config import StyleConfig
+from routes.shot_breakdown import get_project_shot
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -113,6 +114,12 @@ class SceneHDRRequest(BaseModel):
 class VideoPromptRequest(BaseModel):
     image: str = Field(..., description="参考图片 URL（/static/projects/... 形式）")
     instruction: str = Field("", description="用户对视频的基本要求")
+
+
+class ShotVideoPromptRequest(BaseModel):
+    project_id: str = Field(..., min_length=1)
+    shot_id: str = Field(..., min_length=1)
+    reference_images: list[str] = Field(default_factory=list, description="图片1人物概念图，图片2镜头参考帧")
 
 
 class ModelViewPromptRequest(BaseModel):
@@ -1121,6 +1128,43 @@ async def generate_video_prompt(request: VideoPromptRequest):
     except Exception as e:
         logger.error("[API] generate-video-prompt: 失败: %s", e)
         raise HTTPException(status_code=500, detail=f"视频提示词生成失败: {str(e)}")
+
+
+@router.post("/api/shot-video-prompt")
+async def generate_shot_video_prompt(request: ShotVideoPromptRequest):
+    """读取 project_id + shot_id 的镜头资料，连同两张指定参考图生成 MiniMax 提示词。"""
+    if len(request.reference_images) != 2:
+        raise HTTPException(status_code=400, detail="镜头表生成需要恰好两张图片：人物概念图和镜头参考帧")
+    image_paths = []
+    for url in request.reference_images:
+        raw_url = url.split("?")[0]
+        if not raw_url.startswith("/static/projects/"):
+            raise HTTPException(status_code=400, detail="参考图必须是当前项目中的本地图片")
+        path = Path(PROJECT_FILE_PATH) / raw_url.removeprefix("/static/projects/")
+        if not path.exists():
+            raise HTTPException(status_code=404, detail=f"参考图不存在: {path.name}")
+        image_paths.append(str(path))
+
+    data, shot, concepts = get_project_shot(request.project_id, request.shot_id)
+    character_ids = set(shot.get("characters") or [])
+    location_id = shot.get("location")
+    prompt_shot = {**shot, "concept_context": {
+        "characters": [{key: item.get(key, "") for key in ("id", "name", "description", "environment")}
+                       for item in concepts.get("characters", []) if item.get("id") in character_ids],
+        "location": next(({key: item.get(key, "") for key in ("id", "name", "environment", "description")}
+                          for item in concepts.get("locations", []) if item.get("id") == location_id), {}),
+    }}
+    llm_service = LLMVisionService()
+    if not llm_service.is_available():
+        raise HTTPException(status_code=503, detail="LLM 视觉模型未就绪，请启动 Ollama 并确认 qwen3-vl:8b 已下载")
+    try:
+        result = await llm_service.generate_shot_video_prompt(
+            image_paths=image_paths, shot=prompt_shot, project_name=data.get("project_name", data.get("name", ""))
+        )
+        return {"success": True, **result, "shot_no": shot.get("shot_no", shot.get("id", ""))}
+    except Exception as exc:
+        logger.error("[API] shot-video-prompt failed: %s", exc)
+        raise HTTPException(status_code=500, detail=f"镜头表视频提示词生成失败: {exc}") from exc
 
 
 # ============ Midjourney 概念图细化路由 ============

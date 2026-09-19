@@ -19,6 +19,7 @@ Skill 文件动态加载：
 """
 
 import logging
+import json
 import base64
 import asyncio
 import requests
@@ -114,7 +115,7 @@ class LLMVisionService:
         data = path.read_bytes()
         return base64.b64encode(data).decode("utf-8")
 
-    def _call_llm_sync(self, system_prompt: str, user_text: str, image_path: Optional[str] = None) -> str:
+    def _call_llm_sync(self, system_prompt: str, user_text: str, image_path: Optional[str] = None, image_paths: Optional[list[str]] = None) -> str:
         """同步调用 Ollama API（支持图片输入）
 
         自动选择模型：
@@ -122,7 +123,8 @@ class LLMVisionService:
         - 无图片 → 文本模型 qwen36-35b（35B MoE，文本质量更好）
         """
         # 根据是否有图片选择模型
-        use_model = self.vision_model if image_path else self.text_model
+        all_image_paths = image_paths or ([image_path] if image_path else [])
+        use_model = self.vision_model if all_image_paths else self.text_model
         if not self._check_ollama_running(use_model):
             raise RuntimeError(
                 f"Ollama 服务不可用或模型 {use_model} 未加载。"
@@ -131,9 +133,8 @@ class LLMVisionService:
 
         # 构建消息
         user_content = {"role": "user", "content": user_text}
-        if image_path:
-            b64 = self._image_to_base64(image_path)
-            user_content["images"] = [b64]
+        if all_image_paths:
+            user_content["images"] = [self._image_to_base64(path) for path in all_image_paths]
 
         messages = []
         if system_prompt:
@@ -141,7 +142,7 @@ class LLMVisionService:
         messages.append(user_content)
 
         logger.info("[LLM] 调用 Ollama API, model=%s, has_image=%s, text_len=%d",
-                    use_model, bool(image_path), len(user_text))
+                    use_model, bool(all_image_paths), len(user_text))
 
         payload = {
             "model": use_model,
@@ -173,10 +174,10 @@ class LLMVisionService:
             logger.info("[LLM] Ollama 返回, model=%s, response_len=%d", use_model, len(text))
         return text.strip()
 
-    async def _call_llm(self, system_prompt: str, user_text: str, image_path: Optional[str] = None) -> str:
+    async def _call_llm(self, system_prompt: str, user_text: str, image_path: Optional[str] = None, image_paths: Optional[list[str]] = None) -> str:
         """异步调用 LLM（在线程池中执行同步 HTTP 请求）"""
         return await asyncio.to_thread(
-            self._call_llm_sync, system_prompt, user_text, image_path
+            self._call_llm_sync, system_prompt, user_text, image_path, image_paths
         )
 
     async def analyze_scene_for_hdr(self, image_path: str, custom_instruction: str = "") -> str:
@@ -288,6 +289,38 @@ class LLMVisionService:
         result = await self._call_llm(system_prompt, user_text, image_path)
         logger.info("[LLM] 视频提示词生成完成: %s...", result[:200])
         return result
+
+    async def generate_shot_video_prompt(self, image_paths: list[str], shot: dict, project_name: str = "") -> dict:
+        """用两个指定参考图和精简镜头 JSON 生成 MiniMax H3 提示词及建议时长。"""
+        system_prompt = self._load_skill("shot_video_prompt")
+        if not system_prompt:
+            system_prompt = "输出 JSON：{\"prompt\":\"中文 MiniMax H3 提示词\",\"duration\":5}。参考图锁定视觉，文字只写动作、镜头和声音。"
+        compact_shot = {
+            "project": project_name,
+            "shot_no": shot.get("shot_no", shot.get("id", "")),
+            "scene": shot.get("scene", ""), "location": shot.get("location", ""),
+            "duration": shot.get("duration", 5), "characters": shot.get("characters", []),
+            "camera": shot.get("camera", {}), "action": shot.get("action", ""),
+            "dialogue": shot.get("dialogue", []), "continuity": shot.get("continuity", ""),
+            "concept_context": shot.get("concept_context", {}),
+        }
+        user_text = (
+            "图片1是人物概念图，图片2是该镜头的构图/场景参考帧。请以两图为视觉依据，"
+            "严格根据以下镜头 JSON 生成 MiniMax H3 单镜头提示词。\n"
+            f"镜头 JSON：{json.dumps(compact_shot, ensure_ascii=False, separators=(',', ':'))}"
+        )
+        raw = await self._call_llm(system_prompt, user_text, image_paths=image_paths)
+        try:
+            start, end = raw.find("{"), raw.rfind("}")
+            parsed = json.loads(raw[start:end + 1]) if start >= 0 and end >= start else {}
+        except Exception:
+            parsed = {}
+        prompt = str(parsed.get("prompt") or raw).strip()
+        try:
+            duration = int(parsed.get("duration", compact_shot["duration"]))
+        except (TypeError, ValueError):
+            duration = 5
+        return {"prompt": prompt, "duration": max(2, min(15, duration))}
 
     async def analyze_image(self, image_path: str, instruction: str = "描述这张图片的内容") -> str:
         """
