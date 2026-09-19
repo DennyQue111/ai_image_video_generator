@@ -7,6 +7,8 @@ import {
 import axios from 'axios'
 import '../styles/ProjectManagement.css'
 
+const PROJECT_MANAGEMENT_CACHE_KEY = 'ai-image-video-generator:shot-and-concepts:workspace:v1'
+
 function formatErr(err) {
   const detail = err?.response?.data?.detail
   if (detail) {
@@ -130,6 +132,7 @@ export default function ProjectManagement() {
   const [currentConceptName, setCurrentConceptName] = useState('')
   const [open, setOpen] = useState(false)
   const [previewShot, setPreviewShot] = useState(null) // 浏览参考图的镜头
+  const [cacheReady, setCacheReady] = useState(false)
   const dropdownRef = useRef(null)
   const jsonInputRef = useRef(null)
 
@@ -151,6 +154,44 @@ export default function ProjectManagement() {
   useEffect(() => {
     setNameInput(currentName || '')
   }, [currentName])
+
+  // 缓存当前选择与未保存编辑内容；保存按钮仍是写入 JSON 的唯一方式。
+  useEffect(() => {
+    try {
+      const cached = JSON.parse(localStorage.getItem(PROJECT_MANAGEMENT_CACHE_KEY) || 'null')
+      if (cached) {
+        setShots(Array.isArray(cached.shots) ? cached.shots : [])
+        setConcepts(normalizeConcepts(cached.concepts))
+        setActiveSection(cached.activeSection === 'concepts' ? 'concepts' : 'shots')
+        setCurrentName(cached.currentName || '')
+        setCurrentConceptName(cached.currentConceptName || '')
+        setProjectMeta(cached.projectMeta || { projectId: '', projectCode: '', conceptsFile: '' })
+        setNameInput(cached.nameInput || cached.currentName || '')
+      }
+    } catch (err) {
+      console.warn('restore shot/concepts cache failed', err)
+    } finally {
+      setCacheReady(true)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!cacheReady) return
+    try {
+      localStorage.setItem(PROJECT_MANAGEMENT_CACHE_KEY, JSON.stringify({
+        shots,
+        concepts,
+        activeSection,
+        currentName,
+        currentConceptName,
+        projectMeta,
+        nameInput,
+        cachedAt: new Date().toISOString(),
+      }))
+    } catch (err) {
+      console.warn('save shot/concepts cache failed', err)
+    }
+  }, [cacheReady, shots, concepts, activeSection, currentName, currentConceptName, projectMeta, nameInput])
 
   // 点击外部关闭下拉
   useEffect(() => {

@@ -13,6 +13,7 @@ import ProjectBar from './ProjectBar'
 
 const TOOLBAR_WIDTH = 240
 const RIGHT_PANEL_WIDTH = 300
+const FREE_CANVAS_CACHE_KEY = 'ai-image-video-generator:free-canvas:workspace:v1'
 
 // 自定义节点类型映射
 const nodeTypes = { imageNode: ImageNode, modelNode: ModelNode, cameraNode: CameraAngleNode }
@@ -60,6 +61,7 @@ export default function FreeCanvas() {
 
   const [loading, setLoading] = useState(false)
   const [currentProject, setCurrentProject] = useState(null)
+  const [cacheReady, setCacheReady] = useState(false)
 
   const handleModelUpload = async (file) => {
     setLoading(true)
@@ -155,6 +157,35 @@ export default function FreeCanvas() {
       ? { ...node, data: { ...node.data, onGenerate: handleCameraGenerate } }
       : node)), 0)
   }
+
+  // 缓存只恢复上一次离开页面时的工作区，不替代用户主动保存的自由画布 JSON。
+  useEffect(() => {
+    try {
+      const cached = JSON.parse(localStorage.getItem(FREE_CANVAS_CACHE_KEY) || 'null')
+      if (cached?.canvas?.nodes) {
+        restoreCanvas(cached.canvas)
+        setCurrentProject(cached.currentProject || null)
+      }
+    } catch (err) {
+      console.warn('restore free canvas cache failed', err)
+    } finally {
+      setCacheReady(true)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!cacheReady) return
+    try {
+      localStorage.setItem(FREE_CANVAS_CACHE_KEY, JSON.stringify({
+        currentProject,
+        canvas: toSaveData(),
+        cachedAt: new Date().toISOString(),
+      }))
+    } catch (err) {
+      // 本地存储不足时不影响正常画布使用和正式保存。
+      console.warn('save free canvas cache failed', err)
+    }
+  }, [cacheReady, currentProject, nodes, edges, toSaveData])
 
   // 从镜头表进入时，画布绑定于该镜头 JSON，而不是独立的 project 文件。
   useEffect(() => {
