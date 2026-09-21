@@ -204,8 +204,12 @@ export default function ProjectManagement() {
   }, [])
 
   // ========== 行编辑 ==========
-  const addShot = () => {
-    setShots((prev) => [...prev, emptyShot()])
+  const addShotAfter = (id) => {
+    setShots((prev) => {
+      const index = prev.findIndex((shot) => shot.id === id)
+      if (index < 0) return prev
+      return [...prev.slice(0, index + 1), emptyShot(), ...prev.slice(index + 1)]
+    })
   }
 
   const removeShot = (id) => {
@@ -516,13 +520,7 @@ export default function ProjectManagement() {
       </div>
 
       {activeSection === 'shots' && <>
-      {/* 镜头表工具条 */}
-      <div className="pm-toolbar">
-        <button className="pm-add-btn" onClick={addShot} disabled={busy}>
-          <Plus size={16} /> 添加镜头
-        </button>
-        <div className="pm-count">共 {shots.length} 个镜头</div>
-      </div>
+      <div className="pm-toolbar"><div className="pm-count">共 {shots.length} 个镜头</div></div>
 
       {/* 镜头表表格 */}
       <div className="pm-table-wrap">
@@ -542,7 +540,7 @@ export default function ProjectManagement() {
                 <th style={{ minWidth: 180 }}>角色 / 对白</th>
                 <th style={{ minWidth: 180 }}>连续性</th>
                 <th style={{ width: 180 }}>参考图</th>
-                <th style={{ width: 96 }}>操作</th>
+                <th style={{ width: 132 }}>操作</th>
               </tr>
             </thead>
             <tbody>
@@ -605,6 +603,9 @@ export default function ProjectManagement() {
                   </td>
                   <td>
                     <div className="pm-row-actions">
+                      <button className="pm-row-canvas" onClick={() => addShotAfter(shot.id)} disabled={busy} title="在此镜头下方添加镜头">
+                        <Plus size={16} />
+                      </button>
                       <button className="pm-row-canvas" onClick={() => handleOpenShotCanvas(shot)} disabled={busy} title="创建或打开此镜头的自由画布项目">
                         <Workflow size={15} />
                       </button>
