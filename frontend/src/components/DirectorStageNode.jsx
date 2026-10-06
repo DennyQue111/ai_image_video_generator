@@ -1,7 +1,8 @@
-import { memo, useEffect, useMemo, useRef } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { Handle, NodeResizer, Position, useReactFlow } from 'reactflow'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js'
 
 const DEFAULT_STAGE = {
   objects: [
@@ -82,6 +83,9 @@ function DirectorStageNode({ data, selected, id }) {
   const controlsRef = useRef(null)
   const rendererRef = useRef(null)
   const currentViewRef = useRef(null)
+  const stageRef = useRef(null)
+  const transformHistoryRef = useRef({ undo: [], redo: [], pending: null })
+  const [transformMode, setTransformMode] = useState('translate')
   const { setNodes } = useReactFlow()
   const stage = useMemo(() => {
     const source = data.stage || {}
@@ -93,6 +97,7 @@ function DirectorStageNode({ data, selected, id }) {
     }
   }, [data.stage])
   const isDcc = stage.coordinateSystem === 'dcc-z-up'
+  stageRef.current = stage
   const commitStage = (next) => {
     setNodes((nodes) => nodes.map((node) => node.id === id
       ? { ...node, data: { ...node.data, stage: next } }
@@ -132,6 +137,42 @@ function DirectorStageNode({ data, selected, id }) {
   }, [stage.coordinateSystem])
 
   useEffect(() => {
+    const onKeyDown = (event) => {
+      if (!selected) return
+      const tag = event.target?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || event.target?.isContentEditable) return
+      const hasModifier = event.ctrlKey || event.metaKey
+      const key = event.key.toLowerCase()
+      if (hasModifier && key === 'z' && !event.shiftKey) {
+        event.preventDefault()
+        const history = transformHistoryRef.current
+        const previous = history.undo.pop()
+        if (!previous) return
+        history.redo.push(cloneStage(stageRef.current))
+        commitStage(previous)
+        return
+      }
+      if ((hasModifier && key === 'y') || (hasModifier && event.shiftKey && key === 'z')) {
+        event.preventDefault()
+        const history = transformHistoryRef.current
+        const following = history.redo.pop()
+        if (!following) return
+        history.undo.push(cloneStage(stageRef.current))
+        commitStage(following)
+        return
+      }
+      const modes = { w: 'translate', e: 'rotate', r: 'scale' }
+      const mode = !hasModifier && modes[key]
+      if (mode) {
+        event.preventDefault()
+        setTransformMode(mode)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [selected, id])
+
+  useEffect(() => {
     if (!mountRef.current) return undefined
     const mount = mountRef.current
     const scene = new THREE.Scene()
@@ -156,6 +197,52 @@ function DirectorStageNode({ data, selected, id }) {
       scene.add(object)
       objectsById.set(item.id, object)
     })
+    const transform = new TransformControls(camera, renderer.domElement)
+    const transformHelper = transform.getHelper()
+    transform.setMode(transformMode)
+    transform.setSpace('world')
+    // Three 内部 Y-up；色彩在导演台中按 DCC 语义重映射：X 红、Y(纵深)绿、Z(高度)蓝。
+    transformHelper.traverse((child) => {
+      if (!child.material || !['Y', 'Z'].includes(child.name)) return
+      const materials = Array.isArray(child.material) ? child.material : [child.material]
+      const color = child.name === 'Y' ? 0x3b82f6 : 0x22c55e
+      materials.forEach((material) => { if (material.color) material.color.setHex(color) })
+    })
+    const selectedObject = objectsById.get(stage.selectedObjectId)
+    if (selectedObject && selectedObject.userData.directorId !== 'ground') transform.attach(selectedObject)
+    transform.addEventListener('dragging-changed', (event) => { orbit.enabled = !event.value })
+    transform.addEventListener('mouseDown', () => {
+      transformHistoryRef.current.pending = cloneStage(stage)
+    })
+    transform.addEventListener('objectChange', () => {
+      const object = transform.object
+      const item = stage.objects.find((entry) => entry.id === object?.userData.directorId)
+      if (transformMode === 'scale' && item?.lockAspect && object) {
+        const uniform = Math.max(0.1, object.scale.x, object.scale.y, object.scale.z)
+        object.scale.setScalar(uniform)
+      }
+    })
+    transform.addEventListener('mouseUp', () => {
+      const object = transform.object
+      if (!object) return
+      const itemId = object.userData.directorId
+      const next = cloneStage(stage)
+      next.objects = next.objects.map((item) => item.id === itemId ? {
+        ...item,
+        position: fromThreeVector(object.position.toArray(), isDcc).map((value) => Number(value.toFixed(2))),
+        rotation: fromThreeVector(object.rotation.toArray().slice(0, 3), isDcc).map((value) => Number(value.toFixed(3))),
+        scale: fromThreeVector(object.scale.toArray(), isDcc).map((value) => Number(value.toFixed(2))),
+      } : item)
+      const history = transformHistoryRef.current
+      if (history.pending && JSON.stringify(history.pending) !== JSON.stringify(next)) {
+        history.undo.push(history.pending)
+        if (history.undo.length > 50) history.undo.shift()
+        history.redo = []
+      }
+      history.pending = null
+      commitStage(next)
+    })
+    scene.add(transformHelper)
     scene.add(new THREE.HemisphereLight(0xbdd8ff, 0x172033, 2.2))
     const key = new THREE.DirectionalLight(0xffffff, 2.8)
     key.position.set(4, 7, 4)
@@ -208,11 +295,12 @@ function DirectorStageNode({ data, selected, id }) {
       cancelAnimationFrame(frame)
       renderer.domElement.removeEventListener('dblclick', selectFromPointer)
       observer.disconnect()
+      transform.dispose()
       orbit.dispose()
       renderer.dispose()
       mount.replaceChildren()
     }
-  }, [stage, isDcc])
+  }, [stage, isDcc, transformMode])
 
   const saveNamedView = (requestedName = '') => {
     if (!cameraRef.current || !controlsRef.current) return
@@ -264,7 +352,7 @@ function DirectorStageNode({ data, selected, id }) {
     <div className={`director-stage-node ${selected ? 'rf-node-selected' : ''}`} style={{ width: '100%', height: '100%' }}>
       <NodeResizer isVisible={selected} minWidth={620} minHeight={470} color="#f59e0b" onResizeEnd={handleResize} />
       <Handle type="target" position={Position.Left} id="input" style={{ background: '#f59e0b' }} />
-      <div className="director-stage-header director-stage-drag-handle">🎬 导演台 · 空间与机位预演</div>
+      <div className="director-stage-header director-stage-drag-handle">🎬 导演台 · {({ translate: '移动', rotate: '旋转', scale: '缩放' })[transformMode]}模式 <span>W/E/R 工具 · Ctrl+Z 撤销</span></div>
       <div className="director-stage-body">
         <div className="director-stage-viewport" ref={mountRef} />
       </div>
