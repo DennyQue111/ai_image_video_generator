@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react'
-import { Upload, Box, Sparkles, Trash2, Loader2 } from 'lucide-react'
+import { Upload, Box, Sparkles, Trash2, Loader2, Clapperboard } from 'lucide-react'
 import axios from 'axios'
 
 // 统一格式化后端错误，避免 alert 显示 [object Object]
@@ -22,7 +22,7 @@ function formatErr(err) {
  * - 文生图（模型选择 + prompt 输入框 + 生成按钮）
  * - 清空画布
  */
-export default function Toolbar({ onAddImage, onAddModel, onTextToImage, onClear, loading }) {
+export default function Toolbar({ onAddImage, onAddModel, onAddDirectorStage, onTextToImage, onClear, loading }) {
   const [t2iPrompt, setT2iPrompt] = useState('')
   const [t2iModel, setT2iModel] = useState('comfyui-flux2')
   const [t2iWidth, setT2iWidth] = useState(1024)
@@ -99,6 +99,16 @@ export default function Toolbar({ onAddImage, onAddModel, onTextToImage, onClear
         style={{ display: 'none' }}
         onChange={handleFileSelect}
       />
+
+      <button
+        onClick={onAddDirectorStage}
+        style={{ ...styles.btnSecondary, background: '#7c4a12' }}
+        disabled={isLoading}
+        title="添加可摆放基础模型与人形占位的导演台"
+      >
+        <Clapperboard size={18} />
+        <span>添加导演台</span>
+      </button>
 
       <button
         onClick={() => modelInputRef.current?.click()}

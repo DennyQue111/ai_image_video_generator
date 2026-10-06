@@ -26,7 +26,8 @@ export function useCanvasElements() {
       const newNode = {
         id,
         type: nodeData.type || 'imageNode',
-        dragHandle: nodeData.dragHandle || (nodeData.type === 'modelNode' ? '.model-node-drag-handle' : nodeData.type === 'cameraNode' ? '.camera-node-drag-handle' : undefined),
+        dragHandle: nodeData.dragHandle || (nodeData.type === 'modelNode' ? '.model-node-drag-handle' : nodeData.type === 'cameraNode' ? '.camera-node-drag-handle' : nodeData.type === 'directorStageNode' ? '.director-stage-drag-handle' : undefined),
+        style: nodeData.style || (nodeData.type === 'directorStageNode' ? { width: nodeData.width || 900, height: nodeData.height || 580 } : undefined),
         position: nodeData.position || { x: 250, y: 200 },
         data: {
           src: nodeData.src,
@@ -142,6 +143,7 @@ export function useCanvasElements() {
     format: n.data.format,
     filename: n.data.filename,
     sizeBytes: n.data.sizeBytes,
+    stage: n.data.stage,
     x: n.position.x,
     y: n.position.y,
   })
@@ -176,7 +178,8 @@ export function useCanvasElements() {
         data.nodes.map((n) => ({
           id: n.id,
           type: n.type || 'imageNode',
-          dragHandle: n.dragHandle || (n.type === 'modelNode' ? '.model-node-drag-handle' : n.type === 'cameraNode' ? '.camera-node-drag-handle' : undefined),
+          dragHandle: n.dragHandle || (n.type === 'modelNode' ? '.model-node-drag-handle' : n.type === 'cameraNode' ? '.camera-node-drag-handle' : n.type === 'directorStageNode' ? '.director-stage-drag-handle' : undefined),
+          style: n.style || (n.type === 'directorStageNode' ? { width: n.data?.width || 900, height: n.data?.height || 580 } : undefined),
           position: n.position || { x: 250, y: 200 },
           data: {
             src: n.data?.src,

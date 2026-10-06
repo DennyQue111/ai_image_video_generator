@@ -6,6 +6,7 @@ import 'reactflow/dist/style.css'
 import { useCanvasElements } from '../hooks/useCanvasElements'
 import ImageNode from './ImageNode'
 import ModelNode from './ModelNode'
+import DirectorStageNode from './DirectorStageNode'
 import CameraAngleNode from './CameraAngleNode'
 import Toolbar from './Toolbar'
 import RightPanel from './RightPanel'
@@ -16,7 +17,7 @@ const RIGHT_PANEL_WIDTH = 300
 const FREE_CANVAS_CACHE_KEY = 'ai-image-video-generator:free-canvas:workspace:v1'
 
 // 自定义节点类型映射
-const nodeTypes = { imageNode: ImageNode, modelNode: ModelNode, cameraNode: CameraAngleNode }
+const nodeTypes = { imageNode: ImageNode, modelNode: ModelNode, cameraNode: CameraAngleNode, directorStageNode: DirectorStageNode }
 
 // 统一格式化后端错误，避免 alert 显示 [object Object]
 function formatErr(err) {
@@ -768,6 +769,21 @@ export default function FreeCanvas() {
       {/* 左侧工具栏 */}
       <Toolbar
         onAddModel={handleModelUpload}
+        onAddDirectorStage={() => addNode({
+          type: 'directorStageNode',
+          width: 900,
+          height: 580,
+          mediaType: 'director-stage',
+          position: { x: 120 + nodes.length * 20, y: 100 + nodes.length * 20 },
+          data: {
+            stage: {
+              coordinateSystem: 'dcc-z-up',
+              objects: [{ id: 'ground', kind: 'ground', name: '地面', position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1], color: '#2f3742' }],
+              selectedObjectId: 'ground',
+              camera: { position: [5.5, 6.5, 3.8], target: [0, 0, 1] },
+            },
+          },
+        })}
         onAddImage={(el) =>
           addNode({
             src: el.src,
@@ -839,6 +855,7 @@ export default function FreeCanvas() {
         onModelViews={handleModelViews}
         onAddCamera={handleAddCamera}
         onInpaint={handleInpaint}
+        onUpdateDirectorStage={(stage) => updateNode(selectedId, { stage })}
         onRemove={() => removeNode(selectedId)}
         onBringToFront={() => bringToFront(selectedId)}
       />

@@ -3,6 +3,93 @@ import { Sparkles, Video, Scissors, Trash2, ArrowUp, FolderOpen, Camera, Brush }
 import axios from 'axios'
 import InpaintMaskModal from './InpaintMaskModal'
 
+const DIRECTOR_KINDS = { wall: '墙体', crate: '木箱', barrel: '油桶', human: '人形占位' }
+const DIRECTOR_COLORS = { wall: '#6b7280', crate: '#9a6b3f', barrel: '#315b78', human: '#4f8ee8' }
+const scaleValues = (value) => Array.isArray(value) ? value : [value || 1, value || 1, value || 1]
+const cloneStage = (stage) => JSON.parse(JSON.stringify(stage))
+
+function DirectorStagePanel({ stage, nodeId, onUpdate, onBringToFront, onRemove }) {
+  const [addKind, setAddKind] = useState('wall')
+  const [viewName, setViewName] = useState('')
+  const selected = stage?.objects?.find((item) => item.id === stage.selectedObjectId) || stage?.objects?.[0]
+  const updateStage = (next) => onUpdate(next)
+  const updateSelected = (changes) => {
+    if (!selected) return
+    const next = cloneStage(stage)
+    next.objects = next.objects.map((item) => item.id === selected.id ? { ...item, ...changes } : item)
+    updateStage(next)
+  }
+  const addObject = () => {
+    const next = cloneStage(stage)
+    const count = next.objects.filter((item) => item.kind === addKind).length + 1
+    const objectId = `${addKind}_${Date.now().toString(36)}`
+    next.objects.push({ id: objectId, kind: addKind, name: `${DIRECTOR_KINDS[addKind]} ${count}`, position: [count * 0.65, 0, count * 0.25], rotation: [0, 0, 0], scale: [1, 1, 1], lockAspect: false, color: DIRECTOR_COLORS[addKind] })
+    next.selectedObjectId = objectId
+    updateStage(next)
+  }
+  const removeSelected = () => {
+    if (!selected || selected.kind === 'ground') return
+    const next = cloneStage(stage)
+    next.objects = next.objects.filter((item) => item.id !== selected.id)
+    next.selectedObjectId = next.objects[0]?.id || ''
+    updateStage(next)
+  }
+  const updateVector = (field, index, rawValue) => {
+    const value = Number(rawValue)
+    if (!Number.isFinite(value)) return
+    const values = [...(selected[field] || [0, 0, 0])]
+    values[index] = field === 'scale' ? Math.max(0.1, value) : value
+    if (field === 'scale' && selected.lockAspect) values.fill(Math.max(0.1, value))
+    updateSelected({ [field]: values })
+  }
+  const updateHeading = (rawValue) => {
+    const value = Number(rawValue)
+    if (!Number.isFinite(value)) return
+    const rotation = [...(selected.rotation || [0, 0, 0])]
+    rotation[2] = (value * Math.PI) / 180
+    updateSelected({ rotation })
+  }
+  const command = (action) => window.dispatchEvent(new CustomEvent('director-stage-command', { detail: { stageId: nodeId, action, name: viewName } }))
+
+  return (
+    <div className="right-panel director-side-panel">
+      <div className="director-side-title">🎬 导演台控制</div>
+      <div className="director-stage-label">添加占位物</div>
+      <div className="director-stage-add-row">
+        <select value={addKind} onChange={(event) => setAddKind(event.target.value)}>{Object.entries(DIRECTOR_KINDS).map(([kind, label]) => <option key={kind} value={kind}>{label}</option>)}</select>
+        <button onClick={addObject}>添加</button>
+      </div>
+      <div className="director-stage-label">场景物体</div>
+      <select value={selected?.id || ''} onChange={(event) => updateStage({ ...cloneStage(stage), selectedObjectId: event.target.value })}>
+        {(stage.objects || []).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+      </select>
+      {selected && selected.kind !== 'ground' && <>
+        <button className="director-stage-remove" onClick={removeSelected}>删除当前物体</button>
+        <div className="director-stage-label">位置（DCC 米）</div>
+        <div className="director-stage-number-row">
+          {['X 横向', 'Y 纵深', 'Z 高低'].map((label, index) => <label key={label}>{label}<input type="number" step="0.1" value={selected.position?.[index] ?? 0} onChange={(event) => updateVector('position', index, event.target.value)} /></label>)}
+        </div>
+        <div className="director-stage-number-row"><label>旋转 Z 轴 °<input type="number" step="1" value={Math.round(((selected.rotation?.[2] || 0) * 180) / Math.PI)} onChange={(event) => updateHeading(event.target.value)} /></label></div>
+        <div className="director-stage-label">缩放</div>
+        <label className="director-stage-checkbox"><input type="checkbox" checked={Boolean(selected.lockAspect)} onChange={(event) => updateSelected({ lockAspect: event.target.checked })} /> 固定比例</label>
+        <div className="director-stage-number-row">
+          {['X', 'Y', 'Z'].map((label, index) => <label key={label}>{label}<input type="number" min="0.1" step="0.1" value={scaleValues(selected.scale)[index]} onChange={(event) => updateVector('scale', index, event.target.value)} /></label>)}
+        </div>
+      </>}
+      <div className="director-stage-label">命名视角</div>
+      <div className="director-stage-camera-row"><input list={`director-view-options-${nodeId}`} value={viewName} placeholder="输入或选择视角名称" onChange={(event) => setViewName(event.target.value)} /><datalist id={`director-view-options-${nodeId}`}>{(stage.views || []).map((view) => <option key={view.id || view.name} value={view.name} />)}</datalist></div>
+      <div className="director-stage-camera-row director-stage-camera-actions">
+        <button disabled={!viewName.trim()} onClick={() => command('saveView')}>保存</button>
+        <button disabled={!(stage.views || []).some((view) => view.name === viewName)} onClick={() => command('switchView')}>切换</button>
+        <button onClick={() => command('exportFrame')}>导出 PNG</button>
+      </div>
+      <div className="director-side-note">DCC 轴：X 红＝横向，Y 绿＝纵深，Z 蓝＝向上。右键旋转、滚轮缩放视图。</div>
+      <button className="canvas-btn canvas-btn-primary" style={{ justifyContent: 'center', marginTop: 12 }} onClick={onBringToFront}><ArrowUp size={16} /> 置顶</button>
+      <button className="canvas-btn canvas-btn-danger" style={{ justifyContent: 'center' }} onClick={onRemove}><Trash2 size={16} /> 删除导演台</button>
+    </div>
+  )
+}
+
 /**
  * 右侧属性面板
  * 选中画布元素时显示操作选项：
@@ -26,6 +113,7 @@ export default function RightPanel({
   onModelViews,
   onAddCamera,
   onInpaint,
+  onUpdateDirectorStage,
   onRemove,
   onBringToFront,
 }) {
@@ -173,6 +261,11 @@ export default function RightPanel({
         <button className="canvas-btn canvas-btn-danger" style={{ justifyContent: 'center' }} onClick={onRemove}><Trash2 size={16} /> 删除</button>
       </div>
     )
+  }
+
+  // 导演台是共享 3D 预演场景，不复用图片的生成与拆分操作。
+  if (selectedElement.type === 'director-stage') {
+    return <DirectorStagePanel stage={selectedElement.stage} nodeId={selectedElement.id} onUpdate={onUpdateDirectorStage} onBringToFront={onBringToFront} onRemove={onRemove} />
   }
 
   // 相机参数与生成操作直接在相机节点中完成，右侧仅保留节点管理操作。
