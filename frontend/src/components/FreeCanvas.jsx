@@ -34,6 +34,79 @@ function formatErr(err) {
   return err?.message || String(err)
 }
 
+const loadCanvasImage = (src) => new Promise((resolve, reject) => {
+  const image = new window.Image()
+  image.crossOrigin = 'anonymous'
+  image.onload = () => resolve(image)
+  image.onerror = () => reject(new Error(`无法加载概念图素材：${src}`))
+  image.src = src
+})
+
+function drawContain(ctx, image, x, y, width, height) {
+  const scale = Math.min(width / image.naturalWidth, height / image.naturalHeight)
+  const drawWidth = image.naturalWidth * scale
+  const drawHeight = image.naturalHeight * scale
+  ctx.drawImage(image, x + (width - drawWidth) / 2, y + (height - drawHeight) / 2, drawWidth, drawHeight)
+}
+
+async function createConceptSheetBlob({ bodyUrl, backUrl, faceSourceUrl }) {
+  const [body, back, faceSource] = await Promise.all([bodyUrl, backUrl, faceSourceUrl].map(loadCanvasImage))
+  const canvas = document.createElement('canvas')
+  // 正面/背面源图是 768×1344；为避免在概念拼图中变成缩略图，两个身体面板按近原尺寸排版。
+  canvas.width = 2688
+  canvas.height = 1536
+  const ctx = canvas.getContext('2d')
+  ctx.fillStyle = '#111827'
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+  ctx.fillStyle = '#f8fafc'
+  ctx.font = '700 34px system-ui, sans-serif'
+  ctx.fillText('CHARACTER CONCEPT · IDENTITY / COSTUME / FACE DETAIL', 56, 60)
+  const panels = [
+    { x: 56, y: 112, width: 780, height: 1368, label: 'FRONT BODY' },
+    { x: 864, y: 112, width: 780, height: 1368, label: 'BACK VIEW' },
+    { x: 1672, y: 112, width: 960, height: 1368, label: 'FACE DETAIL · 2× SOURCE' },
+  ]
+  panels.forEach((panel) => {
+    ctx.fillStyle = '#1f2937'
+    ctx.fillRect(panel.x, panel.y, panel.width, panel.height)
+    ctx.strokeStyle = '#475569'
+    ctx.lineWidth = 2
+    ctx.strokeRect(panel.x, panel.y, panel.width, panel.height)
+    ctx.fillStyle = '#cbd5e1'
+    ctx.font = '600 20px system-ui, sans-serif'
+    ctx.fillText(panel.label, panel.x + 18, panel.y + 34)
+  })
+  drawContain(ctx, body, panels[0].x + 14, panels[0].y + 52, panels[0].width - 28, panels[0].height - 68)
+  drawContain(ctx, back, panels[1].x + 14, panels[1].y + 52, panels[1].width - 28, panels[1].height - 68)
+  // 保留上半身区域；人物发顶常接近图像顶部，因此顶部只裁约 8%，避免脸部详情切掉发型。
+  const upperHalfHeight = Math.round(faceSource.naturalHeight * 0.5)
+  const cropWidth = Math.round(faceSource.naturalWidth * 0.5)
+  const cropHeight = Math.round(upperHalfHeight - faceSource.naturalHeight * 0.08)
+  const cropX = Math.round(faceSource.naturalWidth * 0.25)
+  const cropY = Math.round(faceSource.naturalHeight * 0.08)
+  const facePanel = panels[2]
+  const innerX = facePanel.x + 20
+  const innerY = facePanel.y + 52
+  const innerWidth = facePanel.width - 40
+  const innerHeight = facePanel.height - 70
+  const cropScale = Math.min(innerWidth / cropWidth, innerHeight / cropHeight)
+  const drawWidth = cropWidth * cropScale
+  const drawHeight = cropHeight * cropScale
+  ctx.drawImage(faceSource, cropX, cropY, cropWidth, cropHeight, innerX + (innerWidth - drawWidth) / 2, innerY + (innerHeight - drawHeight) / 2, drawWidth, drawHeight)
+  return new Promise((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('概念图拼接失败')), 'image/png'))
+}
+
+async function createHeadlessBodyBlob({ sourceUrl, chinY }) {
+  const source = await loadCanvasImage(sourceUrl)
+  const cropY = Math.round(Math.max(0.12, Math.min(0.72, chinY)) * source.naturalHeight)
+  const canvas = document.createElement('canvas')
+  canvas.width = source.naturalWidth
+  canvas.height = Math.max(1, source.naturalHeight - cropY)
+  const ctx = canvas.getContext('2d')
+  ctx.drawImage(source, 0, cropY, source.naturalWidth, source.naturalHeight - cropY, 0, 0, canvas.width, canvas.height)
+  return new Promise((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('无头身体裁切失败')), 'image/png'))
+}
+
 export default function FreeCanvas() {
   const routerLocation = useLocation()
   const openedShotRef = useRef(null)
@@ -424,6 +497,83 @@ export default function FreeCanvas() {
       }
     } catch (err) {
       alert('放大失败: ' + formatErr(err))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // 角色概念图：正面、背面、无头身体与 2× 脸部细节均保留为独立资产，最终再拼成一张低显存 MiniMax 参考图。
+  const handleGenerateConceptSheet = async (extraInstruction = '', chinAdjustment = 0) => {
+    const source = selectedElement
+    if (!source || source.type !== 'image' || selectedElements.length > 1) return
+    const instruction = extraInstruction.trim()
+    const suffix = instruction ? ` Additional constraints: ${instruction}` : ''
+    const createFluxImage = async (imageUrl, prompt) => {
+      const res = await axios.post('/api/image-to-image', {
+        model: 'comfyui-flux-kontext',
+        images: [{ url: imageUrl }],
+        prompt,
+        width: 768,
+        height: 1344,
+      })
+      const item = res.data.images?.[0]
+      if (!item) throw new Error('Flux 未返回概念图素材')
+      return item.url || item.local_url
+    }
+    const createNode = (src, role, x, y, parentId, prompt = '') => {
+      const nodeId = addNode({
+        src,
+        width: 180,
+        height: 315,
+        position: { x, y },
+        data: { operation: 'character-concept', conceptRole: role, prompt },
+      })
+      if (parentId) addEdgeBetween(parentId, nodeId)
+      return nodeId
+    }
+    setLoading(true)
+    try {
+      const frontPrompt = `Create a full-body front-view image of the exact character in the input image. The character faces straight toward the camera and stands naturally with both arms relaxed at the sides. Keep the character exactly consistent with the input image. One character only. No text.${suffix}`
+      const frontUrl = await createFluxImage(source.src, frontPrompt)
+      const frontId = createNode(frontUrl, '正面全身锚图', (source.x || 0) + (source.width || 256) + 100, source.y || 0, source.id, frontPrompt)
+
+      const backPrompt = `Create a full-body back-view image of the exact same character in the input image. The character faces directly away from the camera and stands naturally with both arms relaxed at the sides. Keep the character exactly consistent with the input image. One character only. No text.${suffix}`
+      const backUrl = await createFluxImage(frontUrl, backPrompt)
+      const backId = createNode(backUrl, '背面全身锚图', (source.x || 0) + (source.width || 256) + 320, source.y || 0, frontId, backPrompt)
+
+      const headCropRes = await axios.post('/api/concept-head-crop', { image: frontUrl })
+      const detectedChinY = Number(headCropRes.data.chin_y)
+      if (!Number.isFinite(detectedChinY)) throw new Error('Qwen3-VL 未返回有效下巴位置')
+      const chinY = Math.max(0.12, Math.min(0.72, detectedChinY + chinAdjustment))
+      const bodyBlob = await createHeadlessBodyBlob({ sourceUrl: frontUrl, chinY })
+      const bodyFormData = new FormData()
+      bodyFormData.append('file', new File([bodyBlob], `character_body_${Date.now()}.png`, { type: 'image/png' }))
+      const bodyUploadRes = await axios.post('/api/upload-image', bodyFormData)
+      if (!bodyUploadRes.data.url) throw new Error('无头身体裁切结果上传失败')
+      const bodyUrl = bodyUploadRes.data.url
+      const bodyId = createNode(bodyUrl, `正面无头身体（下巴 ${Math.round(chinY * 100)}%）`, (source.x || 0) + (source.width || 256) + 540, source.y || 0, frontId)
+
+      const upscaleRes = await axios.post('/api/upscale-image', { image_url: frontUrl, ratio: 2, model: 'comfyui-seedvr2' })
+      const upscaleItem = upscaleRes.data.images?.[0]
+      if (!upscaleItem) throw new Error('SeedVR2 未返回放大图片')
+      const upscaleUrl = upscaleItem.url || upscaleItem.local_url
+      const upscaleId = createNode(upscaleUrl, '正面 2× 放大源图', (source.x || 0) + (source.width || 256) + 320, (source.y || 0) + 360, frontId)
+
+      const conceptBlob = await createConceptSheetBlob({ bodyUrl, backUrl, faceSourceUrl: upscaleUrl })
+      const formData = new FormData()
+      formData.append('file', new File([conceptBlob], `character_concept_${Date.now()}.png`, { type: 'image/png' }))
+      const uploadRes = await axios.post('/api/upload-image', formData)
+      if (!uploadRes.data.url) throw new Error('概念拼图上传失败')
+      const conceptId = addNode({
+        src: uploadRes.data.url,
+        width: 448,
+        height: 256,
+        position: { x: (source.x || 0) + (source.width || 256) + 780, y: source.y || 0 },
+        data: { operation: 'character-concept-sheet', conceptRole: 'MiniMax 概念拼图', sourceFront: frontUrl, sourceBack: backUrl, sourceBody: bodyUrl, faceSource: upscaleUrl },
+      })
+      ;[bodyId, backId, upscaleId].forEach((nodeId) => addEdgeBetween(nodeId, conceptId))
+    } catch (err) {
+      alert('概念图生成失败：' + formatErr(err))
     } finally {
       setLoading(false)
     }
@@ -853,6 +1003,7 @@ export default function FreeCanvas() {
         onRefineGenerate={handleRefineGenerate}
         onGenerateModelViewPrompt={handleModelViewPrompt}
         onModelViews={handleModelViews}
+        onGenerateConceptSheet={handleGenerateConceptSheet}
         onAddCamera={handleAddCamera}
         onInpaint={handleInpaint}
         onUpdateDirectorStage={(stage) => updateNode(selectedId, { stage })}

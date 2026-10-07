@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from constants import PROJECT_FILE_PATH
 from services.comfyui_client import get_comfyui_client
+from services.face_detection import locate_chin_y
 from services.google_ai_client import GoogleAIClient
 from services.llm_vision_service import LLMVisionService
 from services.style_config import StyleConfig
@@ -125,6 +126,10 @@ class ShotVideoPromptRequest(BaseModel):
 class ModelViewPromptRequest(BaseModel):
     image: str = Field(..., description="参考图片 URL")
     instruction: str = Field("", description="用户对模型三视图的要求")
+
+
+class ConceptHeadCropRequest(BaseModel):
+    image: str = Field(..., description="单角色正面全身图 URL")
 
 
 class YoloSplitRequest(BaseModel):
@@ -1189,6 +1194,25 @@ async def model_view_prompt(request: ModelViewPromptRequest):
     except Exception as e:
         logger.error("[API] model-view-prompt failed: %s", e)
         raise HTTPException(status_code=500, detail=f"模型三视图提示词生成失败: {str(e)}")
+
+
+@router.post("/api/concept-head-crop")
+async def concept_head_crop(request: ConceptHeadCropRequest):
+    """用本地人脸检测定位正面全身图的下巴，为前端无头身体裁切提供默认位置。"""
+    raw_url = request.image.split("?")[0]
+    if "/static/projects/" not in raw_url:
+        raise HTTPException(status_code=400, detail="仅支持应用内已保存的图片")
+    relative = raw_url.split("/static/projects/", 1)[1]
+    image_path = Path(PROJECT_FILE_PATH) / relative
+    if not image_path.exists():
+        raise HTTPException(status_code=404, detail=f"图片文件不存在: {image_path}")
+    try:
+        import asyncio
+        chin_y = await asyncio.to_thread(locate_chin_y, str(image_path))
+        return {"success": True, "chin_y": chin_y, "method": "opencv_haar"}
+    except Exception as exc:
+        logger.error("[API] concept-head-crop face detection failed: %s", exc)
+        raise HTTPException(status_code=422, detail=f"本地人脸检测未能定位人脸: {exc}") from exc
 
 
 @router.post("/api/refine-analyze")

@@ -111,6 +111,7 @@ export default function RightPanel({
   onRefineGenerate,
   onGenerateModelViewPrompt,
   onModelViews,
+  onGenerateConceptSheet,
   onAddCamera,
   onInpaint,
   onUpdateDirectorStage,
@@ -132,6 +133,8 @@ export default function RightPanel({
   // 细化子页签：LLM 生成的提示词（null=未生成，字符串=已生成可编辑）
   const [refinePrompt, setRefinePrompt] = useState(null)
   const [modelViewInstruction, setModelViewInstruction] = useState('提取图片中的主要人物，生成这个人物的模型三视图。默认保留原图的图片风格。')
+  const [conceptInstruction, setConceptInstruction] = useState('')
+  const [conceptChinAdjustment, setConceptChinAdjustment] = useState(0)
   // Qwen 生成的正视图提示词；展示给用户确认并允许在提交 Flux 前修改
   const [modelViewFrontPrompt, setModelViewFrontPrompt] = useState(null)
   // 图生视频：分辨率选择（16:9 或 9:16）
@@ -628,6 +631,12 @@ export default function RightPanel({
             >
               模型三视图
             </div>
+            <div
+              className={`right-panel-subtab ${skillSubTab === 'concept' ? 'active' : ''}`}
+              onClick={() => setSkillSubTab('concept')}
+            >
+              概念图
+            </div>
           </div>
 
           {skillSubTab === 'refine' && (
@@ -717,6 +726,51 @@ export default function RightPanel({
                   </button>
                 </>
               )}
+            </div>
+          )}
+
+          {skillSubTab === 'concept' && (
+            <div>
+              <div style={{ padding: '8px 10px', borderRadius: 6, background: 'rgba(124,58,237,.12)', border: '1px solid #4c3a70', color: '#ddd6fe', fontSize: 12, lineHeight: 1.6 }}>
+                以当前单张人物图为源，顺序生成 Flux 正面全身、背面全身、无头身体；再用 SeedVR2 放大正面图，自动裁取脸部详情并拼成一张概念图。中间资产与拼图都会保留在画布。
+              </div>
+              {multiCount > 1 && <div style={{ color: '#f59e0b', fontSize: 11, marginTop: 8 }}>概念图生成只支持单张人物源图，请取消多选。</div>}
+              <div className="panel-label" style={{ marginTop: 10 }}>额外约束（可选）</div>
+              <textarea
+                className="canvas-textarea"
+                value={conceptInstruction}
+                onChange={(event) => setConceptInstruction(event.target.value)}
+                rows={4}
+                style={{ marginTop: 4, fontSize: 12 }}
+                placeholder="例如：三维 UE 渲染；保留黑色机械左臂与红色夹克。"
+              />
+              <div className="panel-label" style={{ marginTop: 10 }}>下巴裁切微调</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+                <input
+                  type="range"
+                  min={-12}
+                  max={12}
+                  step={1}
+                  value={Math.round(conceptChinAdjustment * 100)}
+                  onChange={(event) => setConceptChinAdjustment(Number(event.target.value) / 100)}
+                  style={{ flex: 1, cursor: 'pointer' }}
+                />
+                <span style={{ color: '#cbd5e1', fontSize: 12, minWidth: 42, textAlign: 'right' }}>{conceptChinAdjustment >= 0 ? '+' : ''}{Math.round(conceptChinAdjustment * 100)}%</span>
+              </div>
+              <div style={{ color: '#777', fontSize: 11, lineHeight: 1.5, marginTop: 4 }}>
+                本地人脸检测会自动识别下巴位置。向右增加裁掉的上方区域，向左则保留更多颈部；默认 0%。
+              </div>
+              <div style={{ color: '#777', fontSize: 11, lineHeight: 1.5, marginTop: 6 }}>
+                整个流程会连续占用 Flux 与 SeedVR2；人脸定位走本地轻量检测，不占用生成模型显存。请等待所有节点出现。概念拼图默认用于低显存 MiniMax 参考，建议与镜头 frame 一起选择。
+              </div>
+              <button
+                className="canvas-btn canvas-btn-success"
+                style={{ width: '100%', marginTop: 8, justifyContent: 'center' }}
+                disabled={loading || multiCount > 1 || selectedElement.type !== 'image'}
+                onClick={() => onGenerateConceptSheet?.(conceptInstruction, conceptChinAdjustment)}
+              >
+                <Sparkles size={16} /> {loading ? '概念图生成中...' : '生成角色概念图'}
+              </button>
             </div>
           )}
         </div>
