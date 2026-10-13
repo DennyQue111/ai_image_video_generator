@@ -9,6 +9,7 @@ const MODEL_OPTIONS = [
     options: [
       { value: 'comfyui-qwen-image', label: 'QwenImage 文生图' },
       { value: 'comfyui-flux2', label: 'Flux.2 Klein 9B FP8' },
+      { value: 'comfyui-z-image-turbo', label: 'Z-Image-Turbo（快速文生图）' },
     ],
   },
   {
@@ -52,6 +53,9 @@ export default function TextToImage() {
     if (model === 'comfyui-flux2') {
       setSteps(20)
       setCfg(3.5)
+    } else if (model === 'comfyui-z-image-turbo') {
+      setSteps(8)
+      setCfg(1.0)
     } else if (model === 'comfyui-qwen-image') {
       setSteps(8)
       setCfg(1.0)

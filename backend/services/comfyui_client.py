@@ -152,26 +152,25 @@ class ComfyUIClient:
         
         return workflow
     
-    def _build_z_image_prompt_to_image_workflow(
+    def _build_z_image_turbo_t2i_workflow(
             self,
             prompt: str,
-            unet: str = "z_image_turbo_bf16.safetensors",
-            vae: str = "ae.safetensors",
-            clip: str = "qwen_3_4b.safetensors",
-            lora: str = "z_image\\CharacterDesign-IZT-V1.safetensors",
             width: int = 1024,
             height: int = 1024,
-            steps: int = 9,
+            steps: int = 8,
             cfg: float = 1.0,
-            seed: int = -1
+            seed: int = -1,
     ) -> Dict[str, Any]:
-        """
-        构建基础的Z-Image concept design 工作流
+        """构建官方 Z-Image-Turbo 文生图 API 工作流。
+
+        对齐 Comfy-Org 的 Z-Image-Turbo 文生图模板：Z-Image UNet、
+        Qwen 3 4B 文本编码器、AE VAE、AuraFlow sampling，以及空负向
+        conditioning。Turbo 是少步蒸馏模型，不加载任何角色 LoRA。
         """
         if seed == -1:
             seed = uuid.uuid4().int % (2**32)
 
-        workflow = {
+        return {
             # Empty Latent Image
             "1": {
                 "class_type": "EmptySD3LatentImage",
@@ -192,8 +191,8 @@ class ComfyUIClient:
                     "seed": seed,
                     "steps": steps,
                     "cfg": cfg,
-                    "sampler_name": "res_multistep",
-                    "scheduler": "simple",
+                    "sampler_name": "dpmpp_2m_sde",
+                    "scheduler": "beta",
                     "denoise": 1.0
                 }
             },
@@ -201,7 +200,7 @@ class ComfyUIClient:
             "3": {
                 "class_type": "ModelSamplingAuraFlow",
                 "inputs": {
-                    "model": ["10", 0],
+                    "model": ["7", 0],
                     "shift": 3.0,
                 }
             },
@@ -224,14 +223,14 @@ class ComfyUIClient:
             "6": {
                 "class_type": "VAELoader",
                 "inputs": {
-                    "vae_name": vae
+                    "vae_name": "ae.safetensors"
                 }
             },
             # unet loader
             "7": {
                 "class_type": "UNETLoader",
                 "inputs": {
-                    "unet_name": unet,
+                    "unet_name": "z_image_turbo_bf16.safetensors",
                     "weight_dtype": "default"
                 }
             },
@@ -239,7 +238,7 @@ class ComfyUIClient:
             "8": {
                 "class_type": "CLIPLoader",
                 "inputs": {
-                    "clip_name": clip,
+                    "clip_name": "qwen_3_4b.safetensors",
                     "type": "lumina2",
                     "device": "default"
                 }
@@ -249,16 +248,7 @@ class ComfyUIClient:
                 "class_type": "SaveImage",
                 "inputs": {
                     "images": ["4", 0],
-                    "filename_prefix": "z-image"
-                }
-            },
-            # lora loader model only
-            "10": {
-                "class_type": "LoraLoaderModelOnly",
-                "inputs": {
-                    "model": ["7", 0],
-                    "lora_name": lora,
-                    "strength_model": 1.0,
+                    "filename_prefix": "z_image_turbo_t2i"
                 }
             },
             # clip text encode
@@ -271,8 +261,6 @@ class ComfyUIClient:
             } 
 
         }
-        
-        return workflow
     
     async def _build_qwen_image_workflow(
             self,
@@ -330,9 +318,8 @@ class ComfyUIClient:
         Returns:
             包含 prompt_id 和生成状态的字典
         """
-        workflow = self._build_z_image_prompt_to_image_workflow(
-            prompt=prompt,
-        )
+        # 兼容旧调用方：默认走当前维护的 Z-Image-Turbo 文生图工作流。
+        workflow = self._build_z_image_turbo_t2i_workflow(prompt=prompt)
         
         async with aiohttp.ClientSession() as session:
             # 提交任务
@@ -731,6 +718,26 @@ class ComfyUIClient:
             prompt=prompt, width=width, height=height, steps=steps, guidance=guidance, seed=seed
         )
         return await self._submit_and_wait(workflow, timeout, "Flux2 t2i")
+
+    async def generate_z_image_turbo_t2i_and_wait(
+        self,
+        prompt: str,
+        width: int = 1024,
+        height: int = 1024,
+        steps: int = 8,
+        cfg: float = 1.0,
+        seed: int = -1,
+        timeout: int = 300,
+    ) -> Dict[str, Any]:
+        """使用官方 Z-Image-Turbo 文生图工作流生成图片。"""
+        logger.info(
+            "[ComfyUI] generate_z_image_turbo_t2i_and_wait, %dx%d, steps=%d, cfg=%.1f",
+            width, height, steps, cfg,
+        )
+        workflow = self._build_z_image_turbo_t2i_workflow(
+            prompt=prompt, width=width, height=height, steps=steps, cfg=cfg, seed=seed,
+        )
+        return await self._submit_and_wait(workflow, timeout, "Z-Image-Turbo t2i")
 
     async def generate_flux_kontext_i2i_and_wait(
         self,

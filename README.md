@@ -9,7 +9,7 @@
 ### 自由画布
 
 - 上传、排列、连线图片与视频节点；上传 GLB 模型并在画布中预览。
-- 文生图：本地 ComfyUI 的 Flux.2 Klein / QwenImage，或 Gemini 图片模型。
+- 文生图：本地 ComfyUI 的 Flux.2 Klein / Z-Image-Turbo / QwenImage，或 Gemini 图片模型。
 - 图生图：QwenImage Edit、Flux.2 Klein 多图编辑、Gemini 多图合成。
 - 局部重绘、图片拆分（YOLO）、放大（SeedVR2）、提示词细化与角色模型三视图辅助。
 - 画布项目可保存、打开、删除；浏览器会缓存最近一次工作区。
@@ -41,7 +41,7 @@
 
 - 前端：React 18、Vite、React Flow、Three.js
 - 后端：FastAPI、Pydantic、Uvicorn
-- 本地图像/视频：ComfyUI 工作流（Flux.2 Klein、QwenImage、LTX、MiniMax H3、SeedVR2 等）
+- 本地图像/视频：ComfyUI 工作流（Flux.2 Klein、Z-Image-Turbo、QwenImage、LTX、MiniMax H3、SeedVR2 等）
 - 云端图像：Google Gemini API（可选）
 - 辅助能力：Ollama / Qwen3-VL（镜头提示词与图片分析，取决于本机配置）、Ultralytics YOLO（图片拆分）
 
@@ -86,6 +86,18 @@ GOOGLE_AI_STUDIO_API_KEY=你的_Gemini_API_Key
 ```
 
 ComfyUI 地址、输出目录及 Ollama 模型等本机参数，请按 `backend/services/` 中的客户端配置与你的环境保持一致。
+
+#### Z-Image-Turbo 文生图模型
+
+在自由画布或文生图页选择“Z-Image-Turbo（快速文生图）”前，需将官方 ComfyUI 版的三个权重放入 ComfyUI 的对应模型目录：
+
+| 文件 | 目录 |
+| --- | --- |
+| `z_image_turbo_bf16.safetensors` | `models/diffusion_models/` |
+| `qwen_3_4b.safetensors` | `models/text_encoders/` |
+| `ae.safetensors` | `models/vae/` |
+
+该工作流使用 8 steps、CFG 1.0 的 Turbo 默认参数；它仅用于文生图，不改变现有 Flux 图生图或 MiniMax 视频流程。
 
 ```powershell
 .\venv\Scripts\python.exe -m uvicorn main:app --host 0.0.0.0 --port 8001

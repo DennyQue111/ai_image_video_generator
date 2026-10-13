@@ -402,6 +402,7 @@ async def text_to_image(request: TextToImageRequest):
     """
     文生图
     - comfyui-qwen-image: 调用 ComfyUI Qwen_Image_2512 工作流
+    - comfyui-z-image-turbo: 调用官方 Z-Image-Turbo 文生图工作流
     - gemini-2.5-flash-image: 调用 Google AI Studio Gemini
     """
     logger.info("[API] /api/text-to-image called, model=%s, style=%s, width=%d, height=%d",
@@ -428,6 +429,16 @@ async def text_to_image(request: TextToImageRequest):
                     height=request.height,
                     steps=request.steps or 20,
                     guidance=request.cfg if request.cfg is not None else 3.5,
+                    seed=request.seed,
+                    timeout=600,
+                )
+            elif request.model == "comfyui-z-image-turbo":
+                result = await comfyui.generate_z_image_turbo_t2i_and_wait(
+                    prompt=full_prompt,
+                    width=request.width,
+                    height=request.height,
+                    steps=request.steps or 8,
+                    cfg=request.cfg if request.cfg is not None else 1.0,
                     seed=request.seed,
                     timeout=600,
                 )

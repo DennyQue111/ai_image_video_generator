@@ -315,10 +315,11 @@ export default function FreeCanvas() {
       // 按模型设置合理默认参数
       const isComfyui = model.startsWith('comfyui')
       const isFlux2 = model === 'comfyui-flux2'
-      // Flux2 的 latent 要求宽高是 16 的倍数，自动对齐
+      const isZImageTurbo = model === 'comfyui-z-image-turbo'
+      // Flux2 / Z-Image 的 latent 要求宽高是 16 的倍数，自动对齐
       const align16 = (v) => Math.max(16, Math.round(v / 16) * 16)
-      const finalWidth = isFlux2 ? align16(width) : width
-      const finalHeight = isFlux2 ? align16(height) : height
+      const finalWidth = (isFlux2 || isZImageTurbo) ? align16(width) : width
+      const finalHeight = (isFlux2 || isZImageTurbo) ? align16(height) : height
       const payload = {
         prompt,
         model,
@@ -329,6 +330,9 @@ export default function FreeCanvas() {
       if (isFlux2) {
         payload.steps = 20
         payload.cfg = 3.5
+      } else if (isZImageTurbo) {
+        payload.steps = 8
+        payload.cfg = 1.0
       } else if (isComfyui) {
         // QwenImage 文生图
         payload.steps = 8
