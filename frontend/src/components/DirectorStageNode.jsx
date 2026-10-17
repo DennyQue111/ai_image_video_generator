@@ -64,6 +64,43 @@ function makeObject(item, isDcc) {
   } else if (item.kind === 'barrel') {
     object = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.85, 20), new THREE.MeshStandardMaterial({ color, roughness: 0.48, metalness: 0.58 }))
     object.position.y = 0.425
+  } else if (item.kind === 'building') {
+    const group = new THREE.Group()
+    const width = item.dimensions?.[0] || 3.6
+    const depth = item.dimensions?.[1] || 3.2
+    const height = item.dimensions?.[2] || 5.5
+    const floors = Math.max(1, Math.round(height / 2.4))
+    const body = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), new THREE.MeshStandardMaterial({ color, roughness: 0.88 }))
+    body.position.y = height / 2
+    body.castShadow = true; body.receiveShadow = true; group.add(body)
+    const trim = new THREE.Mesh(new THREE.BoxGeometry(width + 0.14, 0.16, depth + 0.14), new THREE.MeshStandardMaterial({ color: '#374151', roughness: 0.8 }))
+    trim.position.y = height + 0.08; trim.castShadow = true; group.add(trim)
+    const windowMaterial = new THREE.MeshStandardMaterial({ color: item.windowColor || '#78b8cf', roughness: 0.3, metalness: 0.18, emissive: '#183c4b', emissiveIntensity: 0.2 })
+    for (let floor = 0; floor < floors; floor++) {
+      const y = 0.75 + floor * 2.4
+      for (const x of [-width * 0.3, 0, width * 0.3]) {
+        const pane = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.86, 0.07), windowMaterial)
+        pane.position.set(x, y, depth / 2 + 0.045); group.add(pane)
+      }
+    }
+    object = group
+  } else if (item.kind === 'road') {
+    object = new THREE.Group()
+    const asphalt = new THREE.Mesh(new THREE.BoxGeometry(8, 0.08, 4), new THREE.MeshStandardMaterial({ color: '#252a31', roughness: 0.95 }))
+    asphalt.position.y = 0.04; object.add(asphalt)
+    for (let x = -2.7; x <= 2.7; x += 1.8) {
+      const dash = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.018, 0.12), new THREE.MeshStandardMaterial({ color: '#e6c96e', roughness: 0.8 }))
+      dash.position.set(x, 0.09, 0); object.add(dash)
+    }
+  } else if (item.kind === 'sidewalk') {
+    object = new THREE.Mesh(new THREE.BoxGeometry(5, 0.18, 1.4), new THREE.MeshStandardMaterial({ color: '#9ca3a0', roughness: 0.94 }))
+    object.position.y = 0.09
+  } else if (item.kind === 'streetlight') {
+    object = new THREE.Group()
+    const mat = new THREE.MeshStandardMaterial({ color: '#29313b', metalness: 0.72, roughness: 0.38 })
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.085, 4.2, 10), mat); pole.position.y = 2.1; object.add(pole)
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.07, 0.07), mat); arm.position.set(0.34, 4.12, 0); object.add(arm)
+    const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.13, 0.22), new THREE.MeshStandardMaterial({ color: '#ffe7a3', emissive: '#ffc65c', emissiveIntensity: 1.3 })); lamp.position.set(0.65, 4.02, 0); object.add(lamp)
   } else {
     object = makeHuman(color)
   }

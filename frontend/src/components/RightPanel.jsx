@@ -3,8 +3,8 @@ import { Sparkles, Video, Scissors, Trash2, ArrowUp, FolderOpen, Camera, Brush }
 import axios from 'axios'
 import InpaintMaskModal from './InpaintMaskModal'
 
-const DIRECTOR_KINDS = { wall: '墙体', crate: '木箱', barrel: '油桶', human: '人形占位' }
-const DIRECTOR_COLORS = { wall: '#6b7280', crate: '#9a6b3f', barrel: '#315b78', human: '#4f8ee8' }
+const DIRECTOR_KINDS = { building: '城市建筑', road: '道路路面', sidewalk: '人行道', streetlight: '路灯', wall: '墙体', crate: '木箱', barrel: '油桶', human: '人形占位' }
+const DIRECTOR_COLORS = { building: '#b8a995', road: '#252a31', sidewalk: '#9ca3a0', streetlight: '#29313b', wall: '#6b7280', crate: '#9a6b3f', barrel: '#315b78', human: '#4f8ee8' }
 const scaleValues = (value) => Array.isArray(value) ? value : [value || 1, value || 1, value || 1]
 const cloneStage = (stage) => JSON.parse(JSON.stringify(stage))
 
@@ -23,7 +23,8 @@ function DirectorStagePanel({ stage, nodeId, onUpdate, onBringToFront, onRemove 
     const next = cloneStage(stage)
     const count = next.objects.filter((item) => item.kind === addKind).length + 1
     const objectId = `${addKind}_${Date.now().toString(36)}`
-    next.objects.push({ id: objectId, kind: addKind, name: `${DIRECTOR_KINDS[addKind]} ${count}`, position: [count * 0.65, 0, count * 0.25], rotation: [0, 0, 0], scale: [1, 1, 1], lockAspect: false, color: DIRECTOR_COLORS[addKind] })
+    const dimensions = addKind === 'building' ? [3.6, 3.2, 5.5] : undefined
+    next.objects.push({ id: objectId, kind: addKind, name: `${DIRECTOR_KINDS[addKind]} ${count}`, position: [count * 0.65, 0, count * 0.25], rotation: [0, 0, 0], scale: [1, 1, 1], dimensions, lockAspect: false, color: DIRECTOR_COLORS[addKind] })
     next.selectedObjectId = objectId
     updateStage(next)
   }

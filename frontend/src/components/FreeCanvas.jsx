@@ -932,9 +932,20 @@ export default function FreeCanvas() {
           data: {
             stage: {
               coordinateSystem: 'dcc-z-up',
-              objects: [{ id: 'ground', kind: 'ground', name: '地面', position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1], color: '#2f3742' }],
-              selectedObjectId: 'ground',
-              camera: { position: [5.5, 6.5, 3.8], target: [0, 0, 1] },
+              objects: [
+                { id: 'ground', kind: 'ground', name: '城市地面', position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1], color: '#5c665f' },
+                { id: 'road_main', kind: 'road', name: '主街道路', position: [0, 0, 0.02], rotation: [0, 0, 0], scale: [1, 1, 1], color: '#252a31' },
+                { id: 'walk_left', kind: 'sidewalk', name: '左侧人行道', position: [0, -2.7, 0], rotation: [0, 0, 0], scale: [1, 1, 1], color: '#a7a49b' },
+                { id: 'walk_right', kind: 'sidewalk', name: '右侧人行道', position: [0, 2.7, 0], rotation: [0, 0, 0], scale: [1, 1, 1], color: '#a7a49b' },
+                { id: 'building_left', kind: 'building', name: '左侧街角楼', position: [-1.2, -5.1, 0], rotation: [0, 0, 0], scale: [1, 1, 1], dimensions: [4.2, 3.4, 7.2], color: '#aa9277' },
+                { id: 'building_right', kind: 'building', name: '右侧街角楼', position: [1.4, 5.1, 0], rotation: [0, 0, Math.PI], scale: [1, 1, 1], dimensions: [4.4, 3.5, 9.5], color: '#87909a' },
+                { id: 'building_back', kind: 'building', name: '远处楼群', position: [6.1, 0, 0], rotation: [0, 0, -Math.PI / 2], scale: [1, 1, 1], dimensions: [5.5, 3.5, 11], color: '#777f8c' },
+                { id: 'lamp_left', kind: 'streetlight', name: '左侧路灯', position: [-1.8, -3.25, 0], rotation: [0, 0, 0], scale: [1, 1, 1], color: '#29313b' },
+                { id: 'lamp_right', kind: 'streetlight', name: '右侧路灯', position: [2.2, 3.2, 0], rotation: [0, 0, Math.PI], scale: [1, 1, 1], color: '#29313b' },
+                { id: 'pedestrian', kind: 'human', name: '行人比例参照', position: [1.6, -0.8, 0], rotation: [0, 0, 0], scale: [1, 1, 1], color: '#4f8ee8' },
+              ],
+              selectedObjectId: 'road_main',
+              camera: { position: [11, -13, 9], target: [1, 0, 3] },
             },
           },
         })}
