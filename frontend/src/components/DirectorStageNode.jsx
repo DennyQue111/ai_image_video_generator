@@ -121,7 +121,7 @@ function DirectorStageNode({ data, selected, id }) {
   const rendererRef = useRef(null)
   const currentViewRef = useRef(null)
   const stageRef = useRef(null)
-  const transformHistoryRef = useRef({ undo: [], redo: [], pending: null })
+  const transformHistoryRef = useRef({ undo: [], redo: [], pending: null, lastStage: null })
   const [transformMode, setTransformMode] = useState('translate')
   const { setNodes } = useReactFlow()
   const stage = useMemo(() => {
@@ -135,7 +135,17 @@ function DirectorStageNode({ data, selected, id }) {
   }, [data.stage])
   const isDcc = stage.coordinateSystem === 'dcc-z-up'
   stageRef.current = stage
+  transformHistoryRef.current.lastStage = transformHistoryRef.current.lastStage || cloneStage(stage)
   const commitStage = (next) => {
+    const history = transformHistoryRef.current
+    const previous = history.lastStage || cloneStage(stageRef.current)
+    if (JSON.stringify(previous) !== JSON.stringify(next)) {
+      history.undo.push(cloneStage(previous))
+      if (history.undo.length > 50) history.undo.shift()
+      history.redo = []
+    }
+    history.lastStage = cloneStage(next)
+    stageRef.current = next
     setNodes((nodes) => nodes.map((node) => node.id === id
       ? { ...node, data: { ...node.data, stage: next } }
       : node))
@@ -177,7 +187,7 @@ function DirectorStageNode({ data, selected, id }) {
     const onKeyDown = (event) => {
       if (!selected) return
       const tag = event.target?.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || event.target?.isContentEditable) return
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || event.target?.isContentEditable) return
       const hasModifier = event.ctrlKey || event.metaKey
       const key = event.key.toLowerCase()
       if (hasModifier && key === 'z' && !event.shiftKey) {
@@ -185,8 +195,12 @@ function DirectorStageNode({ data, selected, id }) {
         const history = transformHistoryRef.current
         const previous = history.undo.pop()
         if (!previous) return
-        history.redo.push(cloneStage(stageRef.current))
-        commitStage(previous)
+        history.redo.push(cloneStage(history.lastStage || stageRef.current))
+        history.lastStage = cloneStage(previous)
+        stageRef.current = previous
+        setNodes((nodes) => nodes.map((node) => node.id === id
+          ? { ...node, data: { ...node.data, stage: previous } }
+          : node))
         return
       }
       if ((hasModifier && key === 'y') || (hasModifier && event.shiftKey && key === 'z')) {
@@ -194,8 +208,12 @@ function DirectorStageNode({ data, selected, id }) {
         const history = transformHistoryRef.current
         const following = history.redo.pop()
         if (!following) return
-        history.undo.push(cloneStage(stageRef.current))
-        commitStage(following)
+        history.undo.push(cloneStage(history.lastStage || stageRef.current))
+        history.lastStage = cloneStage(following)
+        stageRef.current = following
+        setNodes((nodes) => nodes.map((node) => node.id === id
+          ? { ...node, data: { ...node.data, stage: following } }
+          : node))
         return
       }
       const modes = { w: 'translate', e: 'rotate', r: 'scale' }
@@ -271,11 +289,6 @@ function DirectorStageNode({ data, selected, id }) {
         scale: fromThreeVector(object.scale.toArray(), isDcc).map((value) => Number(value.toFixed(2))),
       } : item)
       const history = transformHistoryRef.current
-      if (history.pending && JSON.stringify(history.pending) !== JSON.stringify(next)) {
-        history.undo.push(history.pending)
-        if (history.undo.length > 50) history.undo.shift()
-        history.redo = []
-      }
       history.pending = null
       commitStage(next)
     })
