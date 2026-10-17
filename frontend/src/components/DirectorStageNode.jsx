@@ -244,6 +244,9 @@ function DirectorStageNode({ data, selected, id }) {
     mount.replaceChildren(renderer.domElement)
     const orbit = new OrbitControls(camera, renderer.domElement)
     orbit.enableDamping = true
+    // Only the selected director-stage node owns wheel zoom; otherwise let React Flow handle it.
+    orbit.enableZoom = Boolean(selected)
+    orbit.zoomSpeed = 0.9
     orbit.target.fromArray(toThreeVector(visibleView.target, isDcc))
     orbit.update()
     const objectsById = new Map()
@@ -350,7 +353,7 @@ function DirectorStageNode({ data, selected, id }) {
       renderer.dispose()
       mount.replaceChildren()
     }
-  }, [stage, isDcc, transformMode])
+  }, [stage, isDcc, transformMode, selected])
 
   const saveNamedView = (requestedName = '') => {
     if (!cameraRef.current || !controlsRef.current) return

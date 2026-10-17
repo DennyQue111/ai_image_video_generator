@@ -136,6 +136,7 @@ export default function FreeCanvas() {
   const [loading, setLoading] = useState(false)
   const [currentProject, setCurrentProject] = useState(null)
   const [cacheReady, setCacheReady] = useState(false)
+  const selectedDirectorStage = nodes.some((node) => node.id === selectedId && node.type === 'directorStageNode')
 
   const handleModelUpload = async (file) => {
     setLoading(true)
@@ -975,6 +976,7 @@ export default function FreeCanvas() {
           onConnect={onConnect}
           onSelectionChange={onSelectionChange}
           onPaneClick={() => selectNode(null)}
+          zoomOnScroll={!selectedDirectorStage}
           deleteKeyCode={['Delete', 'Backspace']}
           multiSelectionKeyCode={['Control', 'Meta', 'Shift']}
           selectionOnDrag
