@@ -95,12 +95,140 @@ function makeObject(item, isDcc) {
   } else if (item.kind === 'sidewalk') {
     object = new THREE.Mesh(new THREE.BoxGeometry(5, 0.18, 1.4), new THREE.MeshStandardMaterial({ color: '#9ca3a0', roughness: 0.94 }))
     object.position.y = 0.09
+  } else if (item.kind === 'water') {
+    object = new THREE.Mesh(new THREE.BoxGeometry(18, 0.06, 12), new THREE.MeshStandardMaterial({ color, roughness: 0.22, metalness: 0.28, transparent: true, opacity: 0.9 }))
+    object.position.y = 0.03
+  } else if (item.kind === 'paving') {
+    object = new THREE.Group()
+    const slab = new THREE.Mesh(new THREE.BoxGeometry(8, 0.18, 8), new THREE.MeshStandardMaterial({ color, roughness: 0.98 }))
+    slab.position.y = 0.09; object.add(slab)
+    const seamMat = new THREE.MeshStandardMaterial({ color: '#62594d', roughness: 1 })
+    for (let offset = -3.5; offset <= 3.5; offset += 1) {
+      const seamX = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.012, 8), seamMat); seamX.position.set(offset, 0.185, 0); object.add(seamX)
+      const seamZ = new THREE.Mesh(new THREE.BoxGeometry(8, 0.012, 0.035), seamMat); seamZ.position.set(0, 0.185, offset); object.add(seamZ)
+    }
   } else if (item.kind === 'streetlight') {
     object = new THREE.Group()
     const mat = new THREE.MeshStandardMaterial({ color: '#29313b', metalness: 0.72, roughness: 0.38 })
     const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.085, 4.2, 10), mat); pole.position.y = 2.1; object.add(pole)
     const arm = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.07, 0.07), mat); arm.position.set(0.34, 4.12, 0); object.add(arm)
     const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.13, 0.22), new THREE.MeshStandardMaterial({ color: '#ffe7a3', emissive: '#ffc65c', emissiveIntensity: 1.3 })); lamp.position.set(0.65, 4.02, 0); object.add(lamp)
+  } else if (item.kind === 'tower') {
+    object = new THREE.Group()
+    const height = item.dimensions?.[2] || 16
+    const radius = item.dimensions?.[0] || 0.9
+    const levels = Math.max(4, Math.round(height / 1.8))
+    for (let level = 0; level < levels; level++) {
+      const t = level / levels
+      const r = radius * (1 - t * 0.62)
+      const floor = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.94, r, height / levels + 0.06, 12), new THREE.MeshStandardMaterial({ color: level % 3 === 0 ? '#8aa5b2' : color, roughness: 0.42, metalness: 0.28 }))
+      floor.position.y = (level + 0.5) * height / levels; object.add(floor)
+    }
+    const spire = new THREE.Mesh(new THREE.ConeGeometry(radius * 0.38, height * 0.18, 10), new THREE.MeshStandardMaterial({ color: '#b7c6cc', metalness: 0.45, roughness: 0.32 }))
+    spire.position.y = height * 1.08; object.add(spire)
+  } else if (item.kind === 'sphere') {
+    object = new THREE.Mesh(new THREE.SphereGeometry(item.dimensions?.[0] || 1, 20, 14), new THREE.MeshStandardMaterial({ color, roughness: 0.38, metalness: 0.25 }))
+  } else if (item.kind === 'cone') {
+    const radius = item.dimensions?.[0] || 1.2
+    const height = item.dimensions?.[2] || 3
+    object = new THREE.Mesh(new THREE.ConeGeometry(radius, height, 8), new THREE.MeshStandardMaterial({ color, roughness: 0.55, metalness: 0.2 }))
+    object.position.y = height / 2
+  } else if (item.kind === 'cylinder') {
+    const radius = item.dimensions?.[0] || 1
+    const height = item.dimensions?.[2] || 4
+    object = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, height, 16), new THREE.MeshStandardMaterial({ color, roughness: 0.6, metalness: 0.18 }))
+    object.position.y = height / 2
+  } else if (item.kind === 'ferrisWheel') {
+    const group = new THREE.Group()
+    const radius = item.dimensions?.[0] || 5
+    const centerY = item.dimensions?.[2] || 6
+    const frameMat = new THREE.MeshStandardMaterial({ color, metalness: 0.72, roughness: 0.38 })
+    const cabinMat = new THREE.MeshStandardMaterial({ color: '#d9a85e', roughness: 0.7 })
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(radius, 0.12, 8, 48), frameMat)
+    rim.position.y = centerY; group.add(rim)
+    const spokeCount = 12
+    for (let i = 0; i < spokeCount; i++) {
+      const angle = i * Math.PI * 2 / spokeCount
+      const spoke = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, radius * 2, 6), frameMat)
+      spoke.position.set(0, centerY, 0)
+      spoke.rotation.z = angle
+      group.add(spoke)
+      const cabin = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.52, 0.38), cabinMat)
+      cabin.position.set(Math.sin(angle) * radius, centerY + Math.cos(angle) * radius, 0)
+      group.add(cabin)
+    }
+    for (const side of [-1, 1]) {
+      const support = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.18, centerY, 8), frameMat)
+      support.position.set(side * radius * 0.35, centerY / 2, 0)
+      support.rotation.z = side * -0.28
+      group.add(support)
+      const brace = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.1, Math.hypot(radius * 0.55, centerY), 8), frameMat)
+      brace.position.set(side * radius * 0.27, centerY * 0.48, 0)
+      brace.rotation.z = side * 0.48
+      group.add(brace)
+    }
+    object = group
+  } else if (item.kind === 'rollercoaster') {
+    const group = new THREE.Group()
+    const trackMat = new THREE.MeshStandardMaterial({ color: '#8b4e2d', metalness: 0.62, roughness: 0.48 })
+    const railMat = new THREE.MeshStandardMaterial({ color: '#c58c4d', metalness: 0.68, roughness: 0.36 })
+    const points = [new THREE.Vector3(-11, 1, 0), new THREE.Vector3(-8, 11, 0), new THREE.Vector3(-5, 17, 0), new THREE.Vector3(-1, 8, 0), new THREE.Vector3(3, 4, 0), new THREE.Vector3(7, 12, 0), new THREE.Vector3(10, 9, 0), new THREE.Vector3(13, 2, 0)]
+    const curve = new THREE.CatmullRomCurve3(points)
+    group.add(new THREE.Mesh(new THREE.TubeGeometry(curve, 72, 0.12, 8, false), trackMat))
+    const secondRail = new THREE.Mesh(new THREE.TubeGeometry(curve, 72, 0.1, 8, false), railMat)
+    secondRail.position.z = 0.38; group.add(secondRail)
+    for (let i = 0; i <= 12; i++) {
+      const point = curve.getPoint(i / 12)
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.12, Math.max(0.3, point.y), 7), trackMat)
+      post.position.set(point.x, point.y / 2, point.z + 0.18); group.add(post)
+    }
+    object = group
+  } else if (item.kind === 'carousel') {
+    const group = new THREE.Group()
+    const iron = new THREE.MeshStandardMaterial({ color: '#473b34', metalness: 0.48, roughness: 0.55 })
+    const faded = new THREE.MeshStandardMaterial({ color: '#b8856e', roughness: 0.78, side: THREE.DoubleSide })
+    const platform = new THREE.Mesh(new THREE.CylinderGeometry(4.3, 4.5, 0.5, 24), iron); platform.position.y = 0.35; group.add(platform)
+    const roof = new THREE.Mesh(new THREE.ConeGeometry(4.2, 2.2, 16), faded); roof.position.y = 6.1; group.add(roof)
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.26, 5.6, 12), iron); hub.position.y = 3.2; group.add(hub)
+    for (let i = 0; i < 12; i++) {
+      const angle = i * Math.PI / 6
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.09, 5, 8), iron)
+      post.position.set(Math.cos(angle) * 3.25, 3, Math.sin(angle) * 3.25); group.add(post)
+      const horse = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.55, 0.7), new THREE.MeshStandardMaterial({ color: i % 2 ? '#d0b386' : '#879394' }))
+      horse.position.set(Math.cos(angle) * 2.4, 1.25 + (i % 2) * 0.35, Math.sin(angle) * 2.4); group.add(horse)
+    }
+    object = group
+  } else if (item.kind === 'fountain') {
+    const group = new THREE.Group()
+    const stone = new THREE.MeshStandardMaterial({ color: '#918b7e', roughness: 0.93 })
+    const water = new THREE.MeshStandardMaterial({ color: '#577b82', roughness: 0.24, metalness: 0.18 })
+    const basin = new THREE.Mesh(new THREE.CylinderGeometry(5.2, 5.5, 0.6, 32), stone); basin.position.y = 0.35; group.add(basin)
+    const waterTop = new THREE.Mesh(new THREE.CylinderGeometry(4.8, 4.8, 0.08, 32), water); waterTop.position.y = 0.68; group.add(waterTop)
+    const tier = new THREE.Mesh(new THREE.CylinderGeometry(2.3, 2.6, 0.55, 20), stone); tier.position.y = 1.1; group.add(tier)
+    const pedestal = new THREE.Mesh(new THREE.CylinderGeometry(0.65, 0.95, 2.5, 10), stone); pedestal.position.y = 2.5; group.add(pedestal)
+    const statue = new THREE.Group()
+    const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.38, 1.3, 4, 8), new THREE.MeshStandardMaterial({ color: '#736e66', roughness: 0.9 })); body.position.y = 4.55; statue.add(body)
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.38, 10, 8), body.material); head.position.set(0, 5.55, 0); statue.add(head)
+    for (const side of [-1, 1]) {
+      const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.15, 1.35, 7), body.material)
+      arm.position.set(side * 0.65, 4.75, 0); arm.rotation.z = side * -0.6; statue.add(arm)
+    }
+    group.add(statue)
+    object = group
+  } else if (item.kind === 'floatingCube') {
+    object = new THREE.Mesh(new THREE.BoxGeometry(5, 5, 5), new THREE.MeshStandardMaterial({ color: '#243d50', roughness: 0.3, metalness: 0.65, emissive: '#123347', emissiveIntensity: 0.36 }))
+  } else if (item.kind === 'desertMountain') {
+    const radius = item.dimensions?.[0] || 12
+    const height = item.dimensions?.[2] || 10
+    object = new THREE.Mesh(new THREE.ConeGeometry(radius, height, 7), new THREE.MeshStandardMaterial({ color, roughness: 1, flatShading: true }))
+    object.position.y = height / 2
+  } else if (item.kind === 'ruin') {
+    const group = new THREE.Group()
+    const stone = new THREE.MeshStandardMaterial({ color, roughness: 0.95 })
+    const wall = new THREE.Mesh(new THREE.BoxGeometry(5, 4, 0.6), stone); wall.position.y = 2; group.add(wall)
+    const gap = new THREE.Mesh(new THREE.BoxGeometry(1.2, 2.4, 0.75), new THREE.MeshStandardMaterial({ color: '#111827' })); gap.position.set(0, 1.2, 0.05); group.add(gap)
+    const broken = new THREE.Mesh(new THREE.BoxGeometry(2, 0.45, 0.9), stone); broken.position.set(-1.7, 4, 0); broken.rotation.z = -0.22; group.add(broken)
+    object = group
   } else {
     object = makeHuman(color)
   }
@@ -231,9 +359,10 @@ function DirectorStageNode({ data, selected, id }) {
     if (!mountRef.current) return undefined
     const mount = mountRef.current
     const scene = new THREE.Scene()
-    scene.background = new THREE.Color('#111827')
-    scene.fog = new THREE.Fog('#111827', 9, 24)
-    const camera = new THREE.PerspectiveCamera(42, 1, 0.01, 1000)
+    scene.background = new THREE.Color('#8db6d2')
+    const depth = Math.max(100, stage.depth || 1000)
+    scene.fog = new THREE.Fog('#8db6d2', Math.max(9, depth * 0.15), Math.max(24, depth * 0.8))
+    const camera = new THREE.PerspectiveCamera(42, 1, 0.01, depth)
     const visibleView = currentViewRef.current || stage.camera
     camera.position.fromArray(toThreeVector(visibleView.position, isDcc))
     const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true })

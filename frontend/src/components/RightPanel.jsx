@@ -3,8 +3,8 @@ import { Sparkles, Video, Scissors, Trash2, ArrowUp, FolderOpen, Camera, Brush }
 import axios from 'axios'
 import InpaintMaskModal from './InpaintMaskModal'
 
-const DIRECTOR_KINDS = { building: '城市建筑', road: '道路路面', sidewalk: '人行道', streetlight: '路灯', wall: '墙体', crate: '木箱', barrel: '油桶', human: '人形占位' }
-const DIRECTOR_COLORS = { building: '#b8a995', road: '#252a31', sidewalk: '#9ca3a0', streetlight: '#29313b', wall: '#6b7280', crate: '#9a6b3f', barrel: '#315b78', human: '#4f8ee8' }
+const DIRECTOR_KINDS = { building: '城市建筑', tower: '摩天塔楼', sphere: '球形地标', cone: '锥形尖顶', cylinder: '圆柱体', ferrisWheel: '摩天轮', rollercoaster: '过山车轨道', carousel: '旋转木马', fountain: '喷泉雕像', floatingCube: '漂浮立方体', desertMountain: '戈壁山体', ruin: '破损拱门', water: '水面', paving: '石板铺地', road: '道路路面', sidewalk: '人行道', streetlight: '路灯', wall: '墙体', crate: '木箱', barrel: '油桶', human: '人形占位' }
+const DIRECTOR_COLORS = { building: '#b8a995', tower: '#718997', sphere: '#d94e43', cone: '#c5a65a', cylinder: '#718997', ferrisWheel: '#5a4534', rollercoaster: '#8b4e2d', carousel: '#b8856e', fountain: '#918b7e', floatingCube: '#243d50', desertMountain: '#b57940', ruin: '#8a7b67', water: '#426e7c', paving: '#a18d70', road: '#252a31', sidewalk: '#9ca3a0', streetlight: '#29313b', wall: '#6b7280', crate: '#9a6b3f', barrel: '#315b78', human: '#4f8ee8' }
 const scaleValues = (value) => Array.isArray(value) ? value : [value || 1, value || 1, value || 1]
 const cloneStage = (stage) => JSON.parse(JSON.stringify(stage))
 
@@ -23,7 +23,7 @@ function DirectorStagePanel({ stage, nodeId, onUpdate, onBringToFront, onRemove 
     const next = cloneStage(stage)
     const count = next.objects.filter((item) => item.kind === addKind).length + 1
     const objectId = `${addKind}_${Date.now().toString(36)}`
-    const dimensions = addKind === 'building' ? [3.6, 3.2, 5.5] : undefined
+    const dimensions = ({ building: [3.6, 3.2, 5.5], tower: [0.9, 0.9, 16], sphere: [1.1, 1.1, 1.1], cone: [1.2, 1.2, 3], cylinder: [1, 1, 4], ferrisWheel: [5, 5, 6], desertMountain: [12, 12, 10] })[addKind]
     next.objects.push({ id: objectId, kind: addKind, name: `${DIRECTOR_KINDS[addKind]} ${count}`, position: [count * 0.65, 0, count * 0.25], rotation: [0, 0, 0], scale: [1, 1, 1], dimensions, lockAspect: false, color: DIRECTOR_COLORS[addKind] })
     next.selectedObjectId = objectId
     updateStage(next)
@@ -49,6 +49,11 @@ function DirectorStagePanel({ stage, nodeId, onUpdate, onBringToFront, onRemove 
     const rotation = [...(selected.rotation || [0, 0, 0])]
     rotation[2] = (value * Math.PI) / 180
     updateSelected({ rotation })
+  }
+  const updateDepth = (rawValue) => {
+    const value = Number(rawValue)
+    if (!Number.isFinite(value)) return
+    updateStage({ ...cloneStage(stage), depth: Math.max(100, Math.min(100000, value)) })
   }
   const command = (action) => window.dispatchEvent(new CustomEvent('director-stage-command', { detail: { stageId: nodeId, action, name: viewName } }))
 
@@ -84,6 +89,8 @@ function DirectorStagePanel({ stage, nodeId, onUpdate, onBringToFront, onRemove 
         <button disabled={!(stage.views || []).some((view) => view.name === viewName)} onClick={() => command('switchView')}>切换</button>
         <button onClick={() => command('exportFrame')}>导出 PNG</button>
       </div>
+      <div className="director-stage-label">相机视线深度（米）</div>
+      <div className="director-stage-camera-row"><input type="number" min="100" max="100000" step="100" value={stage.depth || 1000} onChange={(event) => updateDepth(event.target.value)} /></div>
       <div className="director-side-note">DCC 轴：X 红＝横向，Y 绿＝纵深，Z 蓝＝向上。右键旋转、滚轮缩放视图。</div>
       <button className="canvas-btn canvas-btn-primary" style={{ justifyContent: 'center', marginTop: 12 }} onClick={onBringToFront}><ArrowUp size={16} /> 置顶</button>
       <button className="canvas-btn canvas-btn-danger" style={{ justifyContent: 'center' }} onClick={onRemove}><Trash2 size={16} /> 删除导演台</button>
