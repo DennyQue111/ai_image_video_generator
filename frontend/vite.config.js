@@ -12,7 +12,11 @@ export default defineConfig({
     },
   },
   server: {
-    host: '127.0.0.1',
+    // Bind to all network adapters so devices on the trusted LAN can open
+    // the development UI. API and static requests remain same-origin and
+    // are proxied to the backend below; the backend itself is not exposed
+    // directly by this setting.
+    host: '0.0.0.0',
     port: Number(process.env.PORT || 5174),
     strictPort: true,
     proxy: {

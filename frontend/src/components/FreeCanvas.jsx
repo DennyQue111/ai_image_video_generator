@@ -78,12 +78,11 @@ async function createConceptSheetBlob({ bodyUrl, backUrl, faceSourceUrl }) {
   })
   drawContain(ctx, body, panels[0].x + 14, panels[0].y + 52, panels[0].width - 28, panels[0].height - 68)
   drawContain(ctx, back, panels[1].x + 14, panels[1].y + 52, panels[1].width - 28, panels[1].height - 68)
-  // 保留上半身区域；人物发顶常接近图像顶部，因此顶部只裁约 8%，避免脸部详情切掉发型。
-  const upperHalfHeight = Math.round(faceSource.naturalHeight * 0.5)
+  // 脸部细节从图像最上沿向下取上半幅，优先保证头顶和头发完整；身体是否进入裁切不重要。
+  const cropHeight = Math.round(faceSource.naturalHeight * 0.5)
   const cropWidth = Math.round(faceSource.naturalWidth * 0.5)
-  const cropHeight = Math.round(upperHalfHeight - faceSource.naturalHeight * 0.08)
   const cropX = Math.round(faceSource.naturalWidth * 0.25)
-  const cropY = Math.round(faceSource.naturalHeight * 0.08)
+  const cropY = 0
   const facePanel = panels[2]
   const innerX = facePanel.x + 20
   const innerY = facePanel.y + 52
@@ -538,11 +537,11 @@ export default function FreeCanvas() {
     }
     setLoading(true)
     try {
-      const frontPrompt = `Create a full-body front-view image of the exact character in the input image. The character faces straight toward the camera and stands naturally with both arms relaxed at the sides. Keep the character exactly consistent with the input image. One character only. No text.${suffix}`
+      const frontPrompt = `Create a full-body front-view image of the exact character in the input image. The character faces straight toward the camera and stands naturally with both arms relaxed at the sides. Keep the character exactly consistent with the input image. Use a seamless pure white studio backdrop with soft, even professional studio lighting and a subtle natural floor contact shadow. Replace the input background completely; do not preserve or reproduce any part of it. One character only. No props. No text.${suffix}`
       const frontUrl = await createFluxImage(source.src, frontPrompt)
       const frontId = createNode(frontUrl, '正面全身锚图', (source.x || 0) + (source.width || 256) + 100, source.y || 0, source.id, frontPrompt)
 
-      const backPrompt = `Create a full-body back-view image of the exact same character in the input image. The character faces directly away from the camera and stands naturally with both arms relaxed at the sides. Keep the character exactly consistent with the input image. One character only. No text.${suffix}`
+      const backPrompt = `Create a full-body back-view image of the exact same character in the input image. The character faces directly away from the camera and stands naturally with both arms relaxed at the sides. Keep the character exactly consistent with the input image. Use the same seamless pure white studio backdrop and soft, even professional studio lighting. Replace the input background completely; do not preserve or reproduce any part of it. One character only. No props. No text.${suffix}`
       const backUrl = await createFluxImage(frontUrl, backPrompt)
       const backId = createNode(backUrl, '背面全身锚图', (source.x || 0) + (source.width || 256) + 320, source.y || 0, frontId, backPrompt)
 
