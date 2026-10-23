@@ -38,12 +38,15 @@ button {
   transition: all 0.2s;
 }
 
-input, textarea, select {
+input,
+textarea,
+select {
   font-family: inherit;
   font-size: 14px;
 }
 
-img, video {
+img,
+video {
   max-width: 100%;
   display: block;
 }
@@ -53,6 +56,10 @@ img, video {
 }
 
 @keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }

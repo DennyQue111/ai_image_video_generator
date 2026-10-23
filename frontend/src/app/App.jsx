@@ -1,8 +1,8 @@
-import { BrowserRouter, Routes, Route, NavLink, useLocation } from 'react-router-dom'
-import FreeCanvas from './components/FreeCanvas'
-import ProjectManagement from './components/ProjectManagement'
-import EditingStudio from './components/EditingStudio'
-import './styles/Canvas.css'
+import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom'
+import FreeCanvas from '../features/free-canvas/pages/FreeCanvas'
+import ProjectManagement from '../features/project-management/pages/ProjectManagement'
+import EditingStudio from '../features/editing-studio/pages/EditingStudio'
+import '../features/free-canvas/styles/Canvas.css'
 
 /**
  * 顶部页签导航

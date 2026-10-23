@@ -62,7 +62,15 @@ ai_image_video_generator/
 │   ├── skills/                 # 图像/视频提示词规则
 │   ├── main.py                 # FastAPI 入口
 │   └── requirements.txt
-├── frontend/                   # React 自由画布、镜头表与导演台
+├── frontend/
+│   └── src/
+│       ├── app/                # 应用入口、路由与全局导航
+│       ├── features/           # 按功能页签组织页面及其私有代码
+│       │   ├── free-canvas/    # 自由画布：pages / components / hooks / styles
+│       │   ├── project-management/ # 镜头表与 Concepts
+│       │   ├── editing-studio/ # 剪辑台
+│       │   └── generation/     # 文生图、图生图、图生视频等工具页
+│       └── shared/             # 全局样式及跨功能共享代码
 ├── outputs/_temp/              # 生成结果、画布项目、镜头表与 Concepts
 └── README.md
 ```
