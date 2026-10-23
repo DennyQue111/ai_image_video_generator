@@ -4,6 +4,7 @@
 """
 
 import logging
+import os
 import uuid
 import shutil
 import subprocess
@@ -70,7 +71,7 @@ class CameraAngleRequest(BaseModel):
 
 class ImageToVideoRequest(BaseModel):
     prompt: str = Field(..., description="视频画面描述（英文）")
-    first_frame_image: str = Field("", description="首帧图片 URL（LTX 必填，MiniMax 用 reference_images）")
+    first_frame_image: str = Field("", description="首帧图片 URL（LTX 必填；MiniMax H3 与 reference_images 同传时，通过 Ref2VA + MiniMaxH3AddGuide 锚定第0帧）")
     reference_images: list = Field(default=[], description="参考图片 URL 列表（MiniMax H3 用，1-9 张）")
     model: str = "comfyui-ltx"
     dialogue: str = ""
@@ -143,7 +144,8 @@ class YoloSplitRequest(BaseModel):
 def _to_full_url(url: str) -> str:
     """将 /static/projects/... 相对路径转为后端可访问的完整 URL"""
     if url and url.startswith("/static/"):
-        full = f"http://localhost:8001{url}"
+        backend_port = os.getenv("DENNY_BACKEND_PORT", "8005")
+        full = f"http://localhost:{backend_port}{url}"
         logger.info("[API] Resolved relative URL: %s -> %s", url, full)
         return full
     return url
@@ -315,6 +317,35 @@ async def upload_image(file: UploadFile = File(...)):
     except Exception as e:
         logger.error("[API] Upload failed: %s", e)
         raise HTTPException(status_code=500, detail=f"上传失败: {str(e)}")
+
+
+@router.get("/api/media-library")
+async def list_generated_media():
+    """List generated image/video assets for the editing studio media bin."""
+    supported = {".mp4", ".webm", ".mov", ".mkv", ".png", ".jpg", ".jpeg", ".webp"}
+    if not OUTPUT_DIR.exists():
+        return {"success": True, "assets": []}
+
+    assets = []
+    for path in OUTPUT_DIR.rglob("*"):
+        if not path.is_file() or path.suffix.lower() not in supported:
+            continue
+        try:
+            stat = path.stat()
+            relative = path.relative_to(PROJECT_FILE_PATH).as_posix()
+            assets.append({
+                "id": relative,
+                "filename": path.name,
+                "type": "video" if path.suffix.lower() in {".mp4", ".webm", ".mov", ".mkv"} else "image",
+                "url": f"/static/projects/{relative}",
+                "size": stat.st_size,
+                "modified_at": stat.st_mtime,
+            })
+        except OSError:
+            logger.warning("[API] Could not read media asset: %s", path)
+
+    assets.sort(key=lambda asset: asset["modified_at"], reverse=True)
+    return {"success": True, "assets": assets[:500]}
 
 
 @router.post("/api/upload-model")
@@ -684,7 +715,7 @@ async def image_to_video(request: ImageToVideoRequest):
     """
     图生视频
     - comfyui-ltx: 调用 ComfyUI LTX 2.3 工作流（首帧图生视频）
-    - comfyui-minimax: 调用 ComfyUI MiniMax H3 Ref2VA 工作流（多图参考生视频）
+    - comfyui-minimax: 调用 ComfyUI MiniMax H3；首帧 + 多参考图时使用 Ref2VA + 官方 AddGuide 锚定 frame 0
     """
     logger.info("[API] /api/image-to-video called, model=%s, fps=%s, duration=%s, has_dialogue=%s",
                 request.model, request.fps, request.duration, bool(request.dialogue))
@@ -705,23 +736,29 @@ async def image_to_video(request: ImageToVideoRequest):
 
     try:
         if request.model == "comfyui-minimax":
-            # MiniMax H3 Ref2VA 工作流
+            # MiniMax H3 首帧+多图使用官方 Ref2VA + AddGuide 组合，不走 T8 节点禁用的 Hybrid 分支。
             ref_urls = [_to_full_url(u) for u in request.reference_images if u]
-            if not ref_urls:
-                raise HTTPException(status_code=400, detail="MiniMax 需要至少 1 张参考图片")
-            if len(ref_urls) > 9:
-                raise HTTPException(status_code=400, detail="MiniMax 最多支持 9 张参考图片")
+            first_frame_url = _to_full_url(request.first_frame_image) if request.first_frame_image else ""
+            if not ref_urls and not first_frame_url:
+                raise HTTPException(status_code=400, detail="MiniMax 需要首帧图片或至少 1 张参考图片")
+            max_ref_urls = 8 if first_frame_url else 9
+            if len(ref_urls) > max_ref_urls:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"MiniMax 最多支持 9 张参考图；首帧会占用 1 个 Picture 槽位，因此提供首帧时人物/外观参考最多 {max_ref_urls} 张",
+                )
 
             width = request.width or 1344
             height = request.height or 768
             duration = request.duration if request.duration > 0 else 8
 
-            logger.info("[API] image-to-video MiniMax H3, images=%d, %dx%d, duration=%ss",
-                        len(ref_urls), width, height, duration)
+            logger.info("[API] image-to-video MiniMax H3, refs=%d, first_frame=%s, %dx%d, duration=%ss",
+                        len(ref_urls), bool(first_frame_url), width, height, duration)
 
             result = await comfyui.generate_minimax_h3_video_and_wait(
                 prompt=request.prompt,
                 reference_image_urls=ref_urls,
+                first_frame_image_url=first_frame_url,
                 width=width,
                 height=height,
                 duration_seconds=duration,

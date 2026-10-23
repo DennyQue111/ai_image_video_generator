@@ -5,6 +5,7 @@ ComfyUI API Client
 
 import json
 import logging
+import re
 import uuid
 import asyncio
 import aiohttp
@@ -3868,11 +3869,19 @@ class ComfyUIClient:
     }
     # LoadImage 节点与 ref_image 索引的映射
     _MINIMAX_IMG_NODE_MAP = {0: "362", 1: "364", 2: "365"}
+    _MINIMAX_FIRST_FRAME_NODE_ID = "420"
+    _MINIMAX_ADD_GUIDE_NODE_ID = "421"
+
+    @staticmethod
+    def _normalize_minimax_prompt_tags(prompt: str) -> str:
+        """Translate project-facing @图片N aliases into MiniMax H3's native picture tags."""
+        return re.sub(r"@图片\s*(\d+)", r"<Picture \1>", prompt or "")
 
     async def generate_minimax_h3_video_and_wait(
         self,
         prompt: str,
         reference_image_urls: List[str],
+        first_frame_image_url: str = "",
         width: int = 1344,
         height: int = 768,
         duration_seconds: float = 8,
@@ -3883,11 +3892,12 @@ class ComfyUIClient:
         workflow_type: str = "pruned",  # "pruned" 截肢版 | "int8" 完整 int8 版
     ) -> Dict[str, Any]:
         """
-        使用 MiniMax H3 Ref2VA 工作流生成视频（多图参考生视频）
+        使用 MiniMax H3 工作流生成视频。首帧与多参考图并用时，将首帧作为 Picture 参考并通过官方 Add Guide 锚定 frame 0。
 
         Args:
             prompt: 视频 prompt（英文）
-            reference_image_urls: 参考图片 URL 列表（1-9 张）
+            reference_image_urls: 外观/人物等参考图片 URL 列表（0-9 张；与首帧并用最多 8 张）
+            first_frame_image_url: 可选首帧图片 URL；与参考图片并用时走 Ref2VA + MiniMaxH3AddGuide
             width: 视频宽度
             height: 视频高度
             duration_seconds: 视频时长（秒）
@@ -3896,19 +3906,39 @@ class ComfyUIClient:
             save_prefix: 保存文件名前缀
             timeout: 超时时间（秒）
         """
-        if not reference_image_urls:
-            raise ValueError("至少需要 1 张参考图片")
+        if not reference_image_urls and not first_frame_image_url:
+            raise ValueError("至少需要首帧图片或 1 张参考图片")
+        max_reference_images = 8 if first_frame_image_url and reference_image_urls else 9
+        if len(reference_image_urls) > max_reference_images:
+            raise ValueError(
+                f"MiniMax H3 最多支持 9 张 Picture 参考；首帧与人物参考并用时，人物参考最多 {max_reference_images} 张"
+            )
 
-        logger.info("[ComfyUI] MiniMax H3 generate, images=%d, %dx%d, duration=%ss, fps=%d",
-                    len(reference_image_urls), width, height, duration_seconds, fps)
+        use_ref2va_first_frame_guide = bool(first_frame_image_url and reference_image_urls)
+        task_type = "Ref2VA" if use_ref2va_first_frame_guide else (
+            "I2VA" if first_frame_image_url else "Ref2VA"
+        )
+        logger.info("[ComfyUI] MiniMax H3 generate, task=%s, refs=%d, has_first_frame=%s, %dx%d, duration=%ss, fps=%d",
+                    task_type, len(reference_image_urls), bool(first_frame_image_url),
+                    width, height, duration_seconds, fps)
 
-        # 1. 上传参考图片到 ComfyUI
+        # 1. 上传图片。首帧+人物参考时，首帧也进入 Picture 参考序列，确保提示词标签有对应媒体；
+        #    同一文件再由官方 MiniMaxH3AddGuide 锚定到 frame 0。
         uploaded_filenames = []
+        first_frame_filename = ""
+        if first_frame_image_url:
+            result = await self.upload_image(first_frame_image_url)
+            first_frame_filename = result["name"]
+            if use_ref2va_first_frame_guide:
+                uploaded_filenames.append(first_frame_filename)
+            logger.info("[ComfyUI] MiniMax H3 uploaded first frame: %s", first_frame_filename)
+
         for i, url in enumerate(reference_image_urls):
             logger.info("[ComfyUI] MiniMax H3 uploading ref image %d/%d", i + 1, len(reference_image_urls))
             result = await self.upload_image(url)
             uploaded_filenames.append(result["name"])
-            logger.info("[ComfyUI] MiniMax H3 ref image %d uploaded: %s", i + 1, result["name"])
+            picture_index = i + (1 if use_ref2va_first_frame_guide else 0)
+            logger.info("[ComfyUI] MiniMax H3 ref image %d uploaded: %s", picture_index + 1, result["name"])
 
         # 2. 加载工作流 JSON 并筛选 Ref2VA 流程
         config_dir = Path(__file__).parent.parent / "config"
@@ -3944,7 +3974,8 @@ class ComfyUIClient:
 
         # Node 339: PrimitiveStringMultiline — prompt
         if "339" in api_workflow:
-            api_workflow["339"]["inputs"]["value"] = prompt
+            normalized_prompt = self._normalize_minimax_prompt_tags(prompt)
+            api_workflow["339"]["inputs"]["value"] = normalized_prompt
             logger.info("[ComfyUI] MiniMax H3 injected prompt into node 339")
 
         # Node 350: PrimitiveFloat — duration
@@ -3963,8 +3994,17 @@ class ComfyUIClient:
         if "363" in api_workflow:
             api_workflow["363"]["inputs"]["width"] = width
             api_workflow["363"]["inputs"]["height"] = height
+            api_workflow["363"]["inputs"]["task_type"] = task_type
             logger.info("[ComfyUI] MiniMax H3 injected %dx%d into node 363 (length left to node 351)",
                         width, height)
+
+            if first_frame_filename and not use_ref2va_first_frame_guide:
+                api_workflow[self._MINIMAX_FIRST_FRAME_NODE_ID] = {
+                    "class_type": "LoadImage",
+                    "inputs": {"image": first_frame_filename},
+                }
+                api_workflow["363"]["inputs"]["first_frame"] = [self._MINIMAX_FIRST_FRAME_NODE_ID, 0]
+                logger.info("[ComfyUI] MiniMax H3 connected I2VA first frame to node 363")
 
         # Node 360: VHS_VideoCombine — 帧率和保存前缀
         if "360" in api_workflow:
@@ -4005,6 +4045,28 @@ class ComfyUIClient:
                 api_workflow["363"]["inputs"][f"ref_images.ref_image_{i}"] = [new_node_id, 0]
                 logger.info("[ComfyUI] MiniMax H3 ref_image_%d -> new node %s, file=%s",
                             i, new_node_id, filename)
+
+        if use_ref2va_first_frame_guide:
+            if "363" not in api_workflow or "347" not in api_workflow:
+                raise RuntimeError("MiniMax H3 workflow is missing Ref2VA conditioning or BasicGuider")
+            api_workflow[self._MINIMAX_FIRST_FRAME_NODE_ID] = {
+                "class_type": "LoadImage",
+                "inputs": {"image": first_frame_filename},
+            }
+            api_workflow[self._MINIMAX_ADD_GUIDE_NODE_ID] = {
+                "class_type": "MiniMaxH3AddGuide",
+                "inputs": {
+                    "positive": ["363", 0],
+                    "latent": ["363", 1],
+                    "frame_idx": 0,
+                    "vae": ["345", 0],
+                    "image": [self._MINIMAX_FIRST_FRAME_NODE_ID, 0],
+                },
+            }
+            api_workflow["347"]["inputs"]["conditioning"] = [self._MINIMAX_ADD_GUIDE_NODE_ID, 0]
+            logger.info(
+                "[ComfyUI] MiniMax H3 anchored first frame via Ref2VA + MiniMaxH3AddGuide; Picture1 is the same keyframe"
+            )
 
         # 移除未使用的 LoadImage 节点和 ref_image 连接
         for i in range(num_images, 3):

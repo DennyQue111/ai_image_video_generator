@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, NavLink, useLocation } from 'react-router-dom'
 import FreeCanvas from './components/FreeCanvas'
 import ProjectManagement from './components/ProjectManagement'
+import EditingStudio from './components/EditingStudio'
 import './styles/Canvas.css'
 
 /**
@@ -14,6 +15,9 @@ function TabNav() {
       </NavLink>
       <NavLink to="/shot_breakdown" className={({ isActive }) => `app-tab ${isActive ? 'active' : ''}`}>
         镜头表管理
+      </NavLink>
+      <NavLink to="/editing" className={({ isActive }) => `app-tab ${isActive ? 'active' : ''}`}>
+        剪辑台
       </NavLink>
       <div style={{ flex: 1 }} />
       <div className="app-tab-title">AI 图片视频生成器</div>
@@ -33,6 +37,7 @@ function Layout() {
           <Route path="/" element={<FreeCanvas />} />
           <Route path="/free_canvas" element={<FreeCanvas />} />
           <Route path="/shot_breakdown" element={<ProjectManagement />} />
+          <Route path="/editing" element={<EditingStudio />} />
         </Routes>
       </div>
     </div>

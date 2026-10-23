@@ -19,7 +19,13 @@
 - 管理 Concepts（角色、场景、道具）和镜头表；镜头记录时长、景别、机位、焦段、运镜、动作、对白、连续性及参考图。
 - 每个镜头可进入独立自由画布，制作角色参考与镜头参考帧。
 - 可由 Qwen3-VL 根据“角色概念图 + 镜头参考帧 + 镜头 JSON”生成可编辑的 MiniMax H3 单镜头提示词。
-- 图生视频支持本地 ComfyUI 的 LTX 2.3 首帧视频，以及 MiniMax H3 Ref2VA 多参考图视频（1–9 张）。
+- 图生视频支持本地 ComfyUI 的 LTX 2.3 首帧视频，以及 MiniMax H3 I2VA、Ref2VA；首帧与角色参考图并用时，通过 Ref2VA + 官方 MiniMaxH3AddGuide 将首帧锚定在 frame 0（首帧同时占用一个 Picture 参考槽位）。
+
+### 剪辑台（开发中）
+
+- 从生成素材库或本机导入图片/视频，按顺序排入视频轨道，拖动调整顺序。
+- 支持播放预览、片段入点/出点、在播放头分割，以及亮度/对比度/饱和度预览调节。
+- 当前项目状态保存在浏览器本地；多轨音频、转场和最终 MP4 导出仍在后续开发。
 
 ### 导演台（轻量 3D 预演）
 
@@ -100,10 +106,10 @@ ComfyUI 地址、输出目录及 Ollama 模型等本机参数，请按 `backend/
 该工作流使用 8 steps、CFG 1.0 的 Turbo 默认参数；它仅用于文生图，不改变现有 Flux 图生图或 MiniMax 视频流程。
 
 ```powershell
-.\venv\Scripts\python.exe -m uvicorn main:app --host 0.0.0.0 --port 8001
+.\venv\Scripts\python.exe -m uvicorn main:app --host 0.0.0.0 --port 8005
 ```
 
-访问 `http://localhost:8001/api/status` 可检查 ComfyUI 与 Gemini 连接状态。
+访问 `http://localhost:8005/api/status` 可检查 ComfyUI 与 Gemini 连接状态。
 
 ### 2. 启动前端
 
@@ -113,14 +119,14 @@ npm install
 npm run dev
 ```
 
-本机打开 `http://localhost:5174/`。Vite 会将 `/api` 与 `/static` 代理到 `http://localhost:8001`；MiniMax 推理耗时较长，代理超时已设为两小时。
+本机打开 `http://localhost:5175/`。Vite 会将 `/api` 与 `/static` 代理到 `http://localhost:8005`；MiniMax 推理耗时较长，代理超时已设为两小时。
 
 ### 局域网共享（可选）
 
 前端默认监听全部网卡。保持后端和前端都在本机运行后，在另一台连接同一可信局域网的电脑上打开：
 
 ```text
-http://<这台电脑的局域网 IPv4 地址>:5174/
+http://<这台电脑的局域网 IPv4 地址>:5175/
 ```
 
 在本机 PowerShell 可查询地址：
@@ -129,7 +135,7 @@ http://<这台电脑的局域网 IPv4 地址>:5174/
 ipconfig
 ```
 
-找到当前 Wi-Fi 适配器的“IPv4 地址”，例如 `192.168.1.23`，则访问 `http://192.168.1.23:5174/`。首次访问被拦截时，请在 Windows 防火墙中仅为“专用网络”允许入站 TCP `5174`；无需向局域网暴露后端 `8001` 或 ComfyUI `8188`。
+找到当前 Wi-Fi 适配器的“IPv4 地址”，例如 `192.168.1.23`，则访问 `http://192.168.1.23:5175/`。首次访问被拦截时，请在 Windows 防火墙中仅为“专用网络”允许入站 TCP `5175`；无需向局域网暴露后端 `8005` 或 ComfyUI `8188`。
 
 > 局域网访问者可以使用项目的上传、生成、保存和删除功能，也会消耗本机 GPU 与已配置的云端 API 配额。仅限可信设备使用；用完后停止前端服务或移除该防火墙规则。
 
@@ -259,10 +265,10 @@ GOOGLE_AI_STUDIO_API_KEY=你的真实_api_key
 启动后端服务：
 
 ```bash
-.\venv\Scripts\python.exe -m uvicorn main:app --host 0.0.0.0 --port 8001
+.\venv\Scripts\python.exe -m uvicorn main:app --host 0.0.0.0 --port 8005
 ```
 
-服务启动后访问：`http://localhost:8001/api/status` 可查看 ComfyUI 和 Gemini 连接状态。
+服务启动后访问：`http://localhost:8005/api/status` 可查看 ComfyUI 和 Gemini 连接状态。
 
 ---
 

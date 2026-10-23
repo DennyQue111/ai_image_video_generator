@@ -8,7 +8,7 @@ const MODEL_OPTIONS = [
     group: 'ComfyUI 工作流',
     options: [
       { value: 'comfyui-ltx', label: 'LTX 2.3 图生视频（首帧）' },
-      { value: 'comfyui-minimax', label: 'MiniMax H3 参考生视频（多图，1-9张）' },
+      { value: 'comfyui-minimax', label: 'MiniMax H3（首帧锚定 + 多图参考）' },
     ],
   },
 ]
@@ -23,7 +23,7 @@ const RESOLUTION_PRESETS = [
 export default function ImageToVideo() {
   const [prompt, setPrompt] = useState('')
   const [model, setModel] = useState('comfyui-ltx')
-  // LTX 用 firstFrame，MiniMax 用 refImages
+  // Both models can use a first frame; MiniMax may combine it with reference images.
   const [firstFrameUrl, setFirstFrameUrl] = useState('')
   const [firstFramePreview, setFirstFramePreview] = useState('')
   const [refImages, setRefImages] = useState([]) // { file, url, serverUrl, uploading }
@@ -41,7 +41,7 @@ export default function ImageToVideo() {
 
   const isMinimax = model === 'comfyui-minimax'
 
-  // LTX 首帧上传
+  // 首帧上传（LTX 必需；MiniMax 可选，用于精确锚定第 0 帧）
   const handleFileChange = async (e) => {
     const file = e.target.files[0]
     if (!file) return
@@ -73,7 +73,17 @@ export default function ImageToVideo() {
 
   // MiniMax 多图上传
   const handleRefFileChange = async (e) => {
-    const files = Array.from(e.target.files)
+    const selectedFiles = Array.from(e.target.files)
+    const maxImages = firstFrameUrl ? 8 : 9
+    const remainingSlots = maxImages - refImages.length
+    if (selectedFiles.length > remainingSlots) {
+      setError(firstFrameUrl
+        ? '首帧占用 Picture 1，人物 / 外观参考最多 8 张'
+        : 'MiniMax 最多支持 9 张参考图片')
+      e.target.value = ''
+      return
+    }
+    const files = selectedFiles
     if (!files.length) return
 
     const newImages = files.map((file) => ({
@@ -132,17 +142,19 @@ export default function ImageToVideo() {
 
       if (isMinimax) {
         const readyImages = refImages.filter((img) => img.serverUrl && !img.uploading)
-        if (!readyImages.length) {
-          setError('请至少上传一张参考图片并等待上传完成')
+        if (!readyImages.length && !firstFrameUrl) {
+          setError('请上传首帧图片或至少一张参考图片')
           setLoading(false)
           return
         }
-        if (readyImages.length > 9) {
-          setError('最多支持 9 张参考图片')
+        const maxRefImages = firstFrameUrl ? 8 : 9
+        if (readyImages.length > maxRefImages) {
+          setError(firstFrameUrl ? '首帧会占用一个 Picture 槽位，人物 / 外观参考最多 8 张' : '最多支持 9 张参考图片')
           setLoading(false)
           return
         }
         payload.reference_images = readyImages.map((img) => img.serverUrl)
+        if (firstFrameUrl) payload.first_frame_image = firstFrameUrl
         const preset = RESOLUTION_PRESETS[resolutionPreset]
         payload.width = preset.width
         payload.height = preset.height
@@ -195,18 +207,19 @@ export default function ImageToVideo() {
           </div>
         </div>
 
-        {/* LTX: 首帧图片 */}
-        {!isMinimax && (
-          <div className="form-row">
+        {/* LTX 首帧必填；MiniMax 首帧可选，可与参考图组合并由 AddGuide 锚定 frame 0 */}
+        <div className="form-row">
             <div className="form-group full">
-              <label className="form-label">首帧图片</label>
+              <label className="form-label">
+                首帧图片{isMinimax ? '（可选；上传后锚定视频第 0 帧）' : '（必填）'}
+              </label>
               {!firstFramePreview ? (
                 <div
                   className="image-upload-zone"
                   onClick={() => fileInputRef.current?.click()}
                 >
                   <Upload size={28} />
-                  <div>点击上传首帧图片</div>
+                  <div>点击上传首帧图片{isMinimax ? '（可选）' : ''}</div>
                   <div style={{ fontSize: '12px', marginTop: '4px' }}>
                     支持 PNG、JPG、WEBP
                   </div>
@@ -247,22 +260,23 @@ export default function ImageToVideo() {
                 onChange={handleFileChange}
               />
             </div>
-          </div>
-        )}
+        </div>
 
-        {/* MiniMax: 多图参考上传 */}
+        {/* MiniMax: 多图参考上传，可与精确首帧锚点组合 */}
         {isMinimax && (
           <div className="form-row">
             <div className="form-group full">
-              <label className="form-label">参考图片（1-9 张）</label>
+              <label className="form-label">
+                人物 / 外观参考图片（可选，{firstFrameUrl ? '最多 8 张；首帧占用 Picture 1' : '最多 9 张'}）
+              </label>
               <div
                 className="image-upload-zone"
                 onClick={() => refFileInputRef.current?.click()}
               >
                 <Upload size={28} />
-                <div>点击上传参考图片（可多选）</div>
+                <div>点击上传人物或外观参考图片（可多选）</div>
                 <div style={{ fontSize: '12px', marginTop: '4px' }}>
-                  支持 PNG、JPG、WEBP，最多 9 张
+                  支持 PNG、JPG、WEBP；与首帧组合时，关键帧也会作为 Picture 1，并额外锚定在视频第 0 帧
                 </div>
               </div>
               {refImages.length > 0 && (

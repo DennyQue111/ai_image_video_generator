@@ -2,7 +2,7 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
 
-const backendPort = process.env.DENNY_BACKEND_PORT || '8001'
+const backendPort = process.env.DENNY_BACKEND_PORT || '8005'
 
 export default defineConfig({
   plugins: [react()],
@@ -17,7 +17,7 @@ export default defineConfig({
     // are proxied to the backend below; the backend itself is not exposed
     // directly by this setting.
     host: '0.0.0.0',
-    port: Number(process.env.PORT || 5174),
+    port: Number(process.env.PORT || 5175),
     strictPort: true,
     proxy: {
       '/api': {
