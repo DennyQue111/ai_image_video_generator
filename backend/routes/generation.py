@@ -4,12 +4,14 @@
 """
 
 import logging
+import json
 import os
 import uuid
 import shutil
 import subprocess
 import sys
 import requests
+from fractions import Fraction
 from pathlib import Path
 from typing import List
 from fastapi import APIRouter, HTTPException, UploadFile, File
@@ -342,6 +344,41 @@ async def upload_editing_media(file: UploadFile = File(...)):
         save_path.unlink(missing_ok=True)
         logger.exception("[API] Editing media upload failed")
         raise HTTPException(status_code=500, detail=f"素材上传失败: {exc}") from exc
+
+
+@router.get("/api/editing-media/frame-rate")
+async def get_editing_media_frame_rate(asset_id: str):
+    """Read a video asset's source frame rate with ffprobe when available."""
+    output_root = OUTPUT_DIR.resolve()
+    media_path = (Path(PROJECT_FILE_PATH) / asset_id).resolve()
+    try:
+        media_path.relative_to(output_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="素材路径无效") from exc
+    if not media_path.is_file():
+        raise HTTPException(status_code=404, detail="视频素材不存在")
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        return {"success": True, "fps": None}
+    try:
+        result = subprocess.run(
+            [ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=avg_frame_rate,r_frame_rate", "-of", "json", str(media_path)],
+            capture_output=True, text=True, check=True, timeout=20,
+        )
+        streams = json.loads(result.stdout).get("streams", [])
+        if not streams:
+            return {"success": True, "fps": None}
+        stream = streams[0]
+        for key in ("avg_frame_rate", "r_frame_rate"):
+            rate = stream.get(key)
+            if rate and rate != "0/0":
+                fps = float(Fraction(rate))
+                if fps > 0:
+                    return {"success": True, "fps": fps}
+        return {"success": True, "fps": None}
+    except (subprocess.SubprocessError, OSError, ValueError, ZeroDivisionError, json.JSONDecodeError) as exc:
+        logger.warning("[API] Could not read frame rate for %s: %s", media_path, exc)
+        return {"success": True, "fps": None}
 
 
 @router.get("/api/media-library")

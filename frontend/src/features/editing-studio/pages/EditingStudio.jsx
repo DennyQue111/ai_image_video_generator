@@ -116,7 +116,7 @@ export default function EditingStudio() {
           const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up) }
           window.addEventListener('pointermove', move); window.addEventListener('pointerup', up, { once: true })
         }} />
-        <ClipPropertiesPanel clip={selected} onUpdate={updateClip} onSplit={splitSelected} onRemove={removeSelected} />
+        <ClipPropertiesPanel clip={selected} onUpdate={updateClip} />
       </section>
 
       <div className="edit-resize-handle edit-resize-vertical" role="separator" aria-label="调整时间线高度" onPointerDown={(event) => {

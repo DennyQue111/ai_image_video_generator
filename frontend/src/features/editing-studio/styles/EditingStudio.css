@@ -25,7 +25,6 @@
 .edit-preview-heading,
 .edit-transport,
 .edit-grade-title,
-.edit-property-actions,
 .timeline-header,
 .timeline-header > div,
 .timeline-ruler,
@@ -427,6 +426,36 @@
 .editing-properties {
   padding-bottom: 10px;
 }
+.edit-property-tabs {
+  display: flex;
+  flex: none;
+  border-bottom: 1px solid #273149;
+}
+.edit-property-tabs button {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 42px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: #8390a7;
+  cursor: pointer;
+}
+.edit-property-tabs button:hover {
+  color: #e2e8f0;
+  background: #172238;
+}
+.edit-property-tabs button.active {
+  color: #bfdbfe;
+  border-bottom-color: #60a5fa;
+}
+.edit-property-content {
+  min-height: 0;
+  overflow: auto;
+}
 .edit-selected-name {
   display: flex;
   gap: 7px;
@@ -436,6 +465,24 @@
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+.edit-clip-detail {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-top: 1px solid #202b40;
+  color: #94a3b8;
+  font-size: 12px;
+}
+.edit-clip-detail strong {
+  overflow: hidden;
+  color: #dbe3ef;
+  font-size: 12px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .edit-selected-name svg {
   color: #93c5fd;
@@ -465,22 +512,6 @@
   padding-top: 12px;
   border-top: 1px solid #273149;
   color: #bfdbfe;
-}
-.edit-property-actions {
-  gap: 6px;
-  flex-direction: column;
-  padding: 10px 12px;
-}
-.edit-property-actions button {
-  width: 100%;
-  justify-content: flex-start;
-}
-.edit-property-actions button:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-.edit-property-actions .danger {
-  color: #fca5a5;
 }
 .editing-timeline {
   height: var(--timeline-height, 230px);
