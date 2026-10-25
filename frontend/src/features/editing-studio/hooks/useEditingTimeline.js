@@ -104,13 +104,7 @@ export function useEditingTimeline() {
 
   const updateClip = (id, patch) => setClips((items) => items.map((clip) => clip.id === id ? { ...clip, ...patch } : clip))
 
-  const seekToClip = (id) => {
-    const index = clips.findIndex((clip) => clip.id === id)
-    if (index < 0) return
-    const time = clips.slice(0, index).reduce((sum, clip) => sum + clip.end - clip.start, 0)
-    setPlayhead(time)
-    setSelectedId(id)
-  }
+  const selectClip = (id) => setSelectedId(id)
 
   const removeSelected = () => {
     if (!selected) return
@@ -225,7 +219,7 @@ export function useEditingTimeline() {
   return {
     library, clips, setClips, tracks, addTrack, removeTrack, moveClipToTrack, selected, selectedId, playhead, setPlayhead, playing, setPlaying,
     libraryError, videoRef, dragId, activeInfo, totalDuration, loadLibrary, addAsset,
-    addLocalFiles, updateClip, seekToClip, removeSelected, splitSelected, moveClip,
+    addLocalFiles, updateClip, selectClip, removeSelected, splitSelected, moveClip,
     handleMetadata, onVideoTime, onVideoEnded,
   }
 }

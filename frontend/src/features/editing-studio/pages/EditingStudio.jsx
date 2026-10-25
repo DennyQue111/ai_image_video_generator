@@ -17,7 +17,7 @@ export default function EditingStudio() {
   const {
     library, clips, tracks, addTrack, removeTrack, selected, selectedId, playhead, setPlayhead, playing, setPlaying,
     libraryError, videoRef, dragId, activeInfo, totalDuration, loadLibrary, addAsset, moveClipToTrack,
-    addLocalFiles, updateClip, seekToClip, removeSelected, splitSelected, moveClip,
+    addLocalFiles, updateClip, selectClip, removeSelected, splitSelected, moveClip,
     handleMetadata, onVideoTime, onVideoEnded,
   } = timeline
 
@@ -85,7 +85,7 @@ export default function EditingStudio() {
         activeClipId={activeInfo?.clip?.id}
         playhead={playhead}
         totalDuration={totalDuration}
-        onSeekClip={seekToClip}
+        onSelectClip={selectClip}
         onSetPlayhead={(time) => { setPlaying(false); setPlayhead(time) }}
         onMoveClip={moveClip}
         onMoveClipToTrack={moveClipToTrack}

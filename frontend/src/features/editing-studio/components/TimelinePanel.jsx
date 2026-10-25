@@ -2,7 +2,7 @@ import { Film, Music2, Pause, Play, Shrink, Maximize2, Plus, Minus } from 'lucid
 import { useRef } from 'react'
 import { formatTime } from '../utils/format'
 
-export default function TimelinePanel({ clips, tracks, selectedId, activeClipId, playhead, totalDuration, onSeekClip, onSetPlayhead, onMoveClip, onMoveClipToTrack, dragId, onAddTrack, onRemoveTrack, playing, onTogglePlayback, compactClips, onToggleCompact, style }) {
+export default function TimelinePanel({ clips, tracks, selectedId, activeClipId, playhead, totalDuration, onSelectClip, onSetPlayhead, onMoveClip, onMoveClipToTrack, dragId, onAddTrack, onRemoveTrack, playing, onTogglePlayback, compactClips, onToggleCompact, style }) {
   const scrubPointerId = useRef(null)
   const trackWidth = Math.max(totalDuration * 72, 720)
   const updateFromPointer = (event, track) => {
@@ -32,7 +32,7 @@ export default function TimelinePanel({ clips, tracks, selectedId, activeClipId,
         <div className={`timeline-track ${track.type === 'audio' ? 'audio-track' : ''}`} style={{ minWidth: trackWidth }} onPointerDown={handleTrackPointerDown} onPointerMove={handleTrackPointerMove} onPointerUp={endTrackScrub} onPointerCancel={endTrackScrub} onDragOver={(event) => { if (track.type === 'video') event.preventDefault() }} onDrop={(event) => { event.preventDefault(); if (track.type === 'video') onMoveClipToTrack(track.id) }}>
         {track.type === 'video' && clips.filter((clip) => (clip.trackId || 'video-1') === track.id).map((clip) => {
           const width = Math.max(compactClips ? 24 : 72, (clip.end - clip.start) * 72)
-          return <button key={clip.id} draggable onDragStart={() => { dragId.current = clip.id }} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.stopPropagation(); onMoveClip(clip.id) }} onClick={() => onSeekClip(clip.id)} className={`timeline-clip ${selectedId === clip.id ? 'selected' : ''} ${activeClipId === clip.id ? 'under-playhead' : ''}`} style={{ width }} title={clip.name}>
+          return <button key={clip.id} draggable onDragStart={() => { dragId.current = clip.id }} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.stopPropagation(); onMoveClip(clip.id) }} onClick={() => onSelectClip(clip.id)} className={`timeline-clip ${selectedId === clip.id ? 'selected' : ''} ${activeClipId === clip.id ? 'under-playhead' : ''}`} style={{ width }} title={clip.name}>
             <span className="timeline-clip-thumb">{clip.type === 'video' ? <video src={clip.src} muted preload="metadata" /> : <img src={clip.src} alt="" />}</span><span className="timeline-clip-label">{clip.name}</span><span className="timeline-clip-duration">{formatTime(clip.end - clip.start)}</span>
           </button>
         })}
