@@ -200,7 +200,8 @@ export function useEditingTimeline() {
     const video = videoRef.current
     if (!video || activeInfo?.clip?.type !== 'video') return
     const targetTime = Math.min(activeInfo.sourceTime, Math.max(0, video.duration - 0.05 || activeInfo.sourceTime))
-    if (Math.abs(video.currentTime - targetTime) > 0.35) video.currentTime = targetTime
+    const seekThreshold = playing ? 0.35 : 0.015
+    if (Math.abs(video.currentTime - targetTime) > seekThreshold) video.currentTime = targetTime
     if (playing) video.play().catch(() => setPlaying(false))
     else video.pause()
   }, [activeInfo?.clip?.id, activeInfo?.sourceTime, playing])
