@@ -2,9 +2,19 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import axios from 'axios'
 
 const PROJECT_KEY = 'ai-image-video-generator:editing-studio:v1'
+const TRACKS_KEY = 'ai-image-video-generator:editing-studio:tracks:v1'
 
 function readSavedClips() {
   try { return JSON.parse(localStorage.getItem(PROJECT_KEY) || '[]') } catch { return [] }
+}
+
+function readSavedTracks() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(TRACKS_KEY) || 'null')
+    return Array.isArray(saved) && saved.some((track) => track.type === 'video')
+      ? [...saved.filter((track) => track.type === 'video'), ...saved.filter((track) => track.type === 'audio')]
+      : [{ id: 'video-1', type: 'video', name: '视频 1' }, { id: 'audio-1', type: 'audio', name: '音频 1' }]
+  } catch { return [{ id: 'video-1', type: 'video', name: '视频 1' }, { id: 'audio-1', type: 'audio', name: '音频 1' }] }
 }
 
 export function useEditingTimeline() {
@@ -13,6 +23,7 @@ export function useEditingTimeline() {
   const [selectedId, setSelectedId] = useState(null)
   const [playhead, setPlayhead] = useState(0)
   const [playing, setPlaying] = useState(false)
+  const [tracks, setTracks] = useState(readSavedTracks)
   const [libraryError, setLibraryError] = useState('')
   const videoRef = useRef(null)
   const dragId = useRef(null)
@@ -34,6 +45,8 @@ export function useEditingTimeline() {
   useEffect(() => {
     localStorage.setItem(PROJECT_KEY, JSON.stringify(clips.filter((clip) => !clip.temporary)))
   }, [clips])
+
+  useEffect(() => { localStorage.setItem(TRACKS_KEY, JSON.stringify(tracks)) }, [tracks])
 
   const loadLibrary = async () => {
     setLibraryError('')
@@ -60,6 +73,7 @@ export function useEditingTimeline() {
       end: isImage ? 5 : 10,
       sourceDuration: isImage ? 5 : 10,
       grade: { brightness: 100, contrast: 100, saturation: 100 },
+      trackId: tracks.find((track) => track.type === 'video')?.id,
     }
     setClips((items) => [...items, clip])
     setSelectedId(id)
@@ -81,6 +95,7 @@ export function useEditingTimeline() {
         end: type === 'image' ? 5 : 10,
         sourceDuration: type === 'image' ? 5 : 10,
         grade: { brightness: 100, contrast: 100, saturation: 100 },
+        trackId: tracks.find((track) => track.type === 'video')?.id,
         temporary: true,
       }])
       setSelectedId(id)
@@ -131,6 +146,33 @@ export function useEditingTimeline() {
     })
   }
 
+  const moveClipToTrack = (trackId) => {
+    const sourceId = dragId.current
+    dragId.current = null
+    if (!sourceId) return
+    setClips((items) => items.map((clip) => clip.id === sourceId ? { ...clip, trackId } : clip))
+  }
+
+  const addTrack = (type, relativeId) => setTracks((items) => {
+    const count = items.filter((track) => track.type === type).length + 1
+    const next = [...items]
+    const relativeIndex = next.findIndex((track) => track.id === relativeId)
+    const insertAt = relativeIndex >= 0 ? relativeIndex + (type === 'video' ? 0 : 1) : next.findIndex((track) => track.type === type) + 1
+    next.splice(Math.max(0, insertAt), 0, { id: `${type}-${Date.now()}`, type, name: `${type === 'video' ? '视频' : '音频'} ${count}` })
+    return [...next.filter((track) => track.type === 'video'), ...next.filter((track) => track.type === 'audio')]
+  })
+
+  const removeTrack = (trackId) => {
+    const track = tracks.find((item) => item.id === trackId)
+    if (!track || tracks.filter((item) => item.type === track.type).length <= 1) return
+    const remainingTracks = tracks.filter((item) => item.id !== trackId)
+    const replacement = remainingTracks.find((item) => item.type === track.type)
+    setTracks(remainingTracks)
+    if (track.type === 'video') {
+      setClips((items) => items.map((clip) => (clip.trackId || 'video-1') === trackId ? { ...clip, trackId: replacement.id } : clip))
+    }
+  }
+
   const handleMetadata = (event) => {
     if (!activeInfo?.clip || !Number.isFinite(event.currentTarget.duration)) return
     const clip = activeInfo.clip
@@ -149,14 +191,9 @@ export function useEditingTimeline() {
   }
 
   const onVideoTime = (event) => {
+    // The master playback clock below advances across clips and image holds;
+    // this handler is retained for the preview element's media event binding.
     if (!playing || !activeInfo) return
-    const current = event.currentTarget.currentTime
-    if (current >= activeInfo.clip.end - 0.06) {
-      onVideoEnded()
-      return
-    }
-    if (Math.abs(current - activeInfo.sourceTime) > 0.6) return
-    setPlayhead(activeInfo.timelineStart + Math.max(0, current - activeInfo.clip.start))
   }
 
   useEffect(() => {
@@ -169,16 +206,23 @@ export function useEditingTimeline() {
   }, [activeInfo?.clip?.id, activeInfo?.sourceTime, playing])
 
   useEffect(() => {
-    if (!playing || activeInfo?.clip?.type !== 'image') return undefined
-    const timer = window.setTimeout(() => {
-      if (playhead + 0.08 >= totalDuration) { setPlayhead(0); setPlaying(false) }
-      else setPlayhead((time) => time + 0.08)
-    }, 80)
-    return () => window.clearTimeout(timer)
-  }, [playing, activeInfo?.clip?.id, playhead, totalDuration])
+    if (!playing || totalDuration <= 0) return undefined
+    const timer = window.setInterval(() => {
+      setPlayhead((time) => {
+        const next = time + 0.04
+        if (next >= totalDuration) {
+          window.clearInterval(timer)
+          setPlaying(false)
+          return 0
+        }
+        return next
+      })
+    }, 40)
+    return () => window.clearInterval(timer)
+  }, [playing, totalDuration])
 
   return {
-    library, clips, setClips, selected, selectedId, playhead, setPlayhead, playing, setPlaying,
+    library, clips, setClips, tracks, addTrack, removeTrack, moveClipToTrack, selected, selectedId, playhead, setPlayhead, playing, setPlaying,
     libraryError, videoRef, dragId, activeInfo, totalDuration, loadLibrary, addAsset,
     addLocalFiles, updateClip, seekToClip, removeSelected, splitSelected, moveClip,
     handleMetadata, onVideoTime, onVideoEnded,

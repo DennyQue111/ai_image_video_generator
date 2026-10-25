@@ -428,10 +428,16 @@ export default function RightPanel({
             <option value="gemini-2.5-flash-image">Gemini 2.5 Flash（多图合成）</option>
             <option value="comfyui-qwen-image-edit">QwenImage Edit（单图编辑）</option>
             <option value="comfyui-flux-kontext">Flux.2 Klein 多图编辑</option>
+            <option value="comfyui-flux3">FLUX.3 Klein Base（单图编辑）</option>
           </select>
           {multiCount > 1 && i2iModel === 'comfyui-qwen-image-edit' && (
             <div style={{ color: '#f59e0b', fontSize: 11, marginTop: 4 }}>
               QwenImage Edit 仅支持单图，多图请选 Gemini 或 Flux.2 多图编辑
+            </div>
+          )}
+          {multiCount > 1 && i2iModel === 'comfyui-flux3' && (
+            <div style={{ color: '#f59e0b', fontSize: 11, marginTop: 4 }}>
+              FLUX.3 Klein 当前仅支持单张参考图，多图融合请切换到 Flux.2 Klein。
             </div>
           )}
 
@@ -501,7 +507,7 @@ export default function RightPanel({
           <button
             className="canvas-btn canvas-btn-primary"
             style={{ width: '100%', marginTop: 8, justifyContent: 'center' }}
-            disabled={loading || !i2iPrompt.trim() || (multiCount > 1 && i2iModel === 'comfyui-qwen-image-edit')}
+            disabled={loading || !i2iPrompt.trim() || (multiCount > 1 && ['comfyui-qwen-image-edit', 'comfyui-flux3'].includes(i2iModel))}
             onClick={() => onImageToImage(i2iPrompt, i2iModel, i2iWidth, i2iHeight)}
           >
             <Sparkles size={16} /> {loading ? '生成中...' : (multiCount > 1 ? `多图融合（${multiCount} 张）` : '图生图')}

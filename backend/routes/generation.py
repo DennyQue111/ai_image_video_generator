@@ -110,7 +110,7 @@ class SceneHDRRequest(BaseModel):
     image: str = Field(..., description="场景图 URL")
     negative_prompt: str = "people, person, human, character"
     custom_instruction: str = ""
-    model: str = "qwen-image-edit"  # qwen-image-edit | flux2-klein
+    model: str = "qwen-image-edit"  # qwen-image-edit | flux2-klein | flux3-klein
 
 
 class VideoPromptRequest(BaseModel):
@@ -463,6 +463,16 @@ async def text_to_image(request: TextToImageRequest):
                     seed=request.seed,
                     timeout=600,
                 )
+            elif request.model == "comfyui-flux3":
+                result = await comfyui.generate_flux3_t2i_and_wait(
+                    prompt=full_prompt,
+                    width=max(16, round(request.width / 16) * 16),
+                    height=max(16, round(request.height / 16) * 16),
+                    steps=request.steps or 50,
+                    guidance=3.5,
+                    seed=request.seed,
+                    timeout=900,
+                )
             elif request.model == "comfyui-z-image-turbo":
                 result = await comfyui.generate_z_image_turbo_t2i_and_wait(
                     prompt=full_prompt,
@@ -575,6 +585,8 @@ async def image_to_image(request: ImageToImageRequest):
         full_source_url = _to_full_url(first_image.url)
         source_image_urls = [_to_full_url(img.url) for img in request.images if img.url]
         logger.info("[API] image-to-image using ComfyUI, model=%s, num_images=%d", request.model, len(source_image_urls))
+        if request.model == "comfyui-flux3" and len(source_image_urls) != 1:
+            raise HTTPException(status_code=400, detail="FLUX.3 Klein 图生图目前仅支持一张参考图；多图融合请使用 FLUX.2 Klein")
 
         try:
             if request.model == "comfyui-flux-kontext":
@@ -590,6 +602,18 @@ async def image_to_image(request: ImageToImageRequest):
                     width=request.width,
                     height=request.height,
                     timeout=600,
+                )
+            elif request.model == "comfyui-flux3":
+                full_prompt = _apply_style(request.prompt, request.style)
+                result = await comfyui.generate_flux3_i2i_and_wait(
+                    source_image_url=full_source_url,
+                    edit_prompt=full_prompt,
+                    width=max(16, round(request.width / 16) * 16),
+                    height=max(16, round(request.height / 16) * 16),
+                    steps=30,
+                    guidance=3.5,
+                    denoise=0.65,
+                    timeout=900,
                 )
             elif request.model.startswith("comfyui-qwen"):
                 # 现有 QwenImage Edit 逻辑
@@ -1061,8 +1085,8 @@ async def gemini_inpaint(request: InpaintRequest):
 
 @router.post("/api/inpaint-image")
 async def comfyui_inpaint(request: ComfyInpaintRequest):
-    """使用现有 FLUX.2 Klein 模型按前端蒙版局部重绘。"""
-    if request.model != "comfyui-flux2-inpaint":
+    """使用 ComfyUI FLUX.2 或 FLUX.3 Klein 按前端蒙版局部重绘。"""
+    if request.model not in {"comfyui-flux2-inpaint", "comfyui-flux3-inpaint"}:
         raise HTTPException(status_code=400, detail=f"暂不支持的修复模型: {request.model}")
     comfyui = get_comfyui_client()
     if not await comfyui.check_connection():
@@ -1073,15 +1097,26 @@ async def comfyui_inpaint(request: ComfyInpaintRequest):
             mask_data, _ = _decode_data_url(request.mask_image)
         else:
             mask_data, _, _ = _resolve_image_data(_to_full_url(request.mask_image))
-        result = await comfyui.generate_flux2_inpaint_and_wait(
-            source_image_url=_to_full_url(request.base_image),
-            mask_image_data=mask_data,
-            edit_prompt=request.prompt,
-            width=request.width,
-            height=request.height,
-            grow_mask_by=request.grow_mask_by,
-            timeout=600,
-        )
+        if request.model == "comfyui-flux3-inpaint":
+            result = await comfyui.generate_flux3_inpaint_and_wait(
+                source_image_url=_to_full_url(request.base_image),
+                mask_image_data=mask_data,
+                edit_prompt=request.prompt,
+                width=max(16, round(request.width / 16) * 16),
+                height=max(16, round(request.height / 16) * 16),
+                grow_mask_by=request.grow_mask_by,
+                timeout=900,
+            )
+        else:
+            result = await comfyui.generate_flux2_inpaint_and_wait(
+                source_image_url=_to_full_url(request.base_image),
+                mask_image_data=mask_data,
+                edit_prompt=request.prompt,
+                width=request.width,
+                height=request.height,
+                grow_mask_by=request.grow_mask_by,
+                timeout=600,
+            )
         images = result.get("images", [])
         if not images:
             raise HTTPException(status_code=500, detail="ComfyUI 未返回修复图片")
@@ -1089,15 +1124,16 @@ async def comfyui_inpaint(request: ComfyInpaintRequest):
         comfyui_url = comfyui.get_image_url(
             image["filename"], image.get("subfolder", ""), image.get("type", "output")
         )
-        saved = _save_comfyui_image(comfyui_url, OUTPUT_DIR / "inpaint", "flux2_inpaint")
+        prefix = "flux3_inpaint" if request.model == "comfyui-flux3-inpaint" else "flux2_inpaint"
+        saved = _save_comfyui_image(comfyui_url, OUTPUT_DIR / "inpaint", prefix)
         return {"success": True, "model": request.model, "images": [saved]}
     except HTTPException:
         raise
     except TimeoutError as e:
         raise HTTPException(status_code=504, detail=str(e))
     except Exception as e:
-        logger.error("[API] Flux2 inpaint failed: %s", e)
-        raise HTTPException(status_code=500, detail=f"FLUX.2 局部重绘失败: {str(e)}")
+        logger.error("[API] ComfyUI inpaint failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"{request.model} 局部重绘失败: {str(e)}")
 
 
 # ============ Gemini 图生提示词 (Image-to-Prompt) ============
@@ -1435,6 +1471,19 @@ async def scene_hdr(request: SceneHDRRequest):
                 timeout=600,
             )
             result_model = "flux2-klein-9b"
+        elif request.model == "flux3-klein":
+            logger.info("[API] scene-hdr: 调用 FLUX.3 Klein 图生图生成...")
+            result = await comfyui.generate_flux3_i2i_and_wait(
+                source_image_url=source_image_url,
+                edit_prompt=hdr_prompt,
+                width=1024,
+                height=1024,
+                steps=30,
+                guidance=3.5,
+                denoise=0.65,
+                timeout=900,
+            )
+            result_model = "flux3-klein-base"
         else:
             logger.info("[API] scene-hdr: 调用 QwenImage Edit 生成 2×2 网格图...")
             result = await comfyui.generate_character_variant_and_wait(

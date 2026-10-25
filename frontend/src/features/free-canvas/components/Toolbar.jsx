@@ -138,6 +138,7 @@ export default function Toolbar({ onAddImage, onAddModel, onAddDirectorStage, on
       >
         <optgroup label="ComfyUI 工作流">
           <option value="comfyui-flux2">Flux.2 Klein 9B FP8</option>
+          <option value="comfyui-flux3">FLUX.3 Klein Base</option>
           <option value="comfyui-z-image-turbo">Z-Image-Turbo（快速文生图）</option>
           <option value="comfyui-qwen-image">QwenImage 文生图</option>
         </optgroup>

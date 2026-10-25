@@ -22,7 +22,7 @@ const RESOLUTION_PRESETS = [
 
 export default function ImageToVideo() {
   const [prompt, setPrompt] = useState('')
-  const [model, setModel] = useState('comfyui-ltx')
+  const [model, setModel] = useState('comfyui-minimax')
   // Both models can use a first frame; MiniMax may combine it with reference images.
   const [firstFrameUrl, setFirstFrameUrl] = useState('')
   const [firstFramePreview, setFirstFramePreview] = useState('')

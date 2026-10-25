@@ -8,7 +8,8 @@ const MODEL_OPTIONS = [
     group: 'ComfyUI 工作流',
     options: [
       { value: 'comfyui-qwen-image-edit', label: 'QwenImage Edit（单图编辑）' },
-      { value: 'comfyui-flux-kontext', label: 'Flux.1 Kontext Dev（图片编辑）' },
+      { value: 'comfyui-flux-kontext', label: 'Flux.2 Klein（多图编辑）' },
+      { value: 'comfyui-flux3', label: 'FLUX.3 Klein Base（单图编辑）' },
     ],
   },
   {
@@ -398,7 +399,10 @@ export default function ImageToImage() {
               </div>
             </div>
 
-            <button className="generate-btn" onClick={handleSubmit} disabled={loading || images.some((i) => i.uploading)}>
+            {model === 'comfyui-flux3' && images.filter((img) => img.serverUrl && !img.uploading).length > 1 && (
+              <div className="error-message">FLUX.3 Klein 当前只支持单张参考图；多图编辑请切换到 Flux.2 Klein。</div>
+            )}
+            <button className="generate-btn" onClick={handleSubmit} disabled={loading || images.some((i) => i.uploading) || (model === 'comfyui-flux3' && images.filter((img) => img.serverUrl && !img.uploading).length !== 1)}>
               {loading ? <Loader2 className="animate-spin" size={18} /> : <Sparkles size={18} />}
               {loading ? '生成中...' : '生成图片'}
             </button>
@@ -418,6 +422,7 @@ export default function ImageToImage() {
                 >
                   <option value="qwen-image-edit">Qwen Image Edit 2511（图生图编辑）</option>
                   <option value="flux2-klein">Flux.2 Klein 9B（图生图编辑）</option>
+                  <option value="flux3-klein">FLUX.3 Klein Base（图生图编辑）</option>
                 </select>
               </div>
             </div>

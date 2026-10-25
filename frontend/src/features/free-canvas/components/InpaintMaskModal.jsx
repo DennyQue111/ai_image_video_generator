@@ -9,6 +9,7 @@ export default function InpaintMaskModal({ imageUrl, loading, onClose, onGenerat
   const drawingRef = useRef(false)
   const lastRef = useRef(null)
   const [prompt, setPrompt] = useState('')
+  const [model, setModel] = useState('comfyui-flux2-inpaint')
   const [brushSize, setBrushSize] = useState(36)
   const [erasing, setErasing] = useState(false)
   const [hasMask, setHasMask] = useState(false)
@@ -108,13 +109,13 @@ export default function InpaintMaskModal({ imageUrl, loading, onClose, onGenerat
       const ratio = 1536 / maxSide
       width *= ratio; height *= ratio
     }
-    await onGenerate({ prompt: prompt.trim(), maskImage: exportMask(), width: align16(width), height: align16(height) })
+    await onGenerate({ prompt: prompt.trim(), maskImage: exportMask(), model, width: align16(width), height: align16(height) })
   }
 
   return (
     <div className="inpaint-modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget && !loading) onClose() }}>
       <div className="inpaint-modal">
-        <div className="inpaint-modal-header"><b>FLUX.2 Inpainting</b><button onClick={onClose} disabled={loading}><X size={18} /></button></div>
+        <div className="inpaint-modal-header"><b>{model === 'comfyui-flux3-inpaint' ? 'FLUX.3 Klein Inpainting' : 'FLUX.2 Klein Inpainting'}</b><button onClick={onClose} disabled={loading}><X size={18} /></button></div>
         <div className="inpaint-toolbar">
           <label><Brush size={15} /> 笔刷 <input type="range" min="8" max="120" value={brushSize} onChange={(e) => setBrushSize(Number(e.target.value))} /> {brushSize}px</label>
           <button className={!erasing ? 'active' : ''} onClick={() => setErasing(false)}><Brush size={14} /> 绘制</button>
@@ -128,6 +129,10 @@ export default function InpaintMaskModal({ imageUrl, loading, onClose, onGenerat
           </div>
         </div>
         <div className="inpaint-footer">
+          <select className="canvas-input" value={model} onChange={(e) => setModel(e.target.value)} disabled={loading}>
+            <option value="comfyui-flux2-inpaint">Flux.2 Klein</option>
+            <option value="comfyui-flux3-inpaint">FLUX.3 Klein Base</option>
+          </select>
           <textarea className="canvas-textarea" rows={3} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="描述白色 Mask 区域要生成什么，例如：移除人物并自然补全背景" />
           <div className="inpaint-help">红色区域会被重绘，其他区域保持原图。</div>
           <button className="canvas-btn canvas-btn-primary" disabled={loading || !hasMask || !prompt.trim()} onClick={submit}><Sparkles size={16} /> {loading ? '重绘中...' : '开始 Inpainting'}</button>

@@ -466,6 +466,198 @@ class ComfyUIClient:
 
     # ============== Flux 文生图 / 图生图 ==============
 
+    def _build_flux3_t2i_workflow(
+        self,
+        prompt: str,
+        width: int = 1024,
+        height: int = 1024,
+        steps: int = 50,
+        guidance: float = 3.5,
+        seed: int = -1,
+    ) -> Dict[str, Any]:
+        """构建 FLUX.3 Klein base 文生图工作流。"""
+        import random
+        if seed == -1:
+            seed = random.randint(0, 2**32 - 1)
+
+        return {
+            "model": {
+                "class_type": "UNETLoader",
+                "inputs": {"unet_name": "flux3-image-klein-base-int8-convrot.safetensors", "weight_dtype": "default"},
+            },
+            "clip": {
+                "class_type": "CLIPLoader",
+                "inputs": {"clip_name": "qwen3vl_4b_int8_convrot.safetensors", "type": "flux3"},
+            },
+            "vae": {"class_type": "VAELoader", "inputs": {"vae_name": "flux2-vae.safetensors"}},
+            "text": {"class_type": "CLIPTextEncode", "inputs": {"text": prompt, "clip": ["clip", 0]}},
+            "guidance": {"class_type": "FluxGuidance", "inputs": {"conditioning": ["text", 0], "guidance": guidance}},
+            "negative": {"class_type": "CLIPTextEncode", "inputs": {"text": "", "clip": ["clip", 0]}},
+            "latent": {"class_type": "EmptySD3LatentImage", "inputs": {"width": width, "height": height, "batch_size": 1}},
+            "sampling_model": {
+                "class_type": "ModelSamplingFlux",
+                "inputs": {"model": ["model", 0], "max_shift": 1.15, "base_shift": 0.5, "width": width, "height": height},
+            },
+            "sample": {
+                "class_type": "KSampler",
+                "inputs": {
+                    "model": ["sampling_model", 0], "seed": seed, "steps": steps, "cfg": 1.0,
+                    "sampler_name": "euler", "scheduler": "simple", "positive": ["guidance", 0],
+                    "negative": ["negative", 0], "latent_image": ["latent", 0], "denoise": 1.0,
+                },
+            },
+            "decode": {"class_type": "VAEDecode", "inputs": {"samples": ["sample", 0], "vae": ["vae", 0]}},
+            "save": {"class_type": "SaveImage", "inputs": {"images": ["decode", 0], "filename_prefix": "flux3_klein_t2i"}},
+        }
+
+    def _build_flux3_i2i_workflow(
+        self,
+        prompt: str,
+        width: int = 1024,
+        height: int = 1024,
+        steps: int = 30,
+        guidance: float = 3.5,
+        denoise: float = 0.65,
+        seed: int = -1,
+    ) -> Dict[str, Any]:
+        """构建 FLUX.3 Klein 图生图工作流（单张源图）。"""
+        import random
+        if seed == -1:
+            seed = random.randint(0, 2**32 - 1)
+
+        return {
+            "model": {
+                "class_type": "UNETLoader",
+                "inputs": {"unet_name": "flux3-image-klein-base-int8-convrot.safetensors", "weight_dtype": "default"},
+            },
+            "clip": {
+                "class_type": "CLIPLoader",
+                "inputs": {"clip_name": "qwen3vl_4b_int8_convrot.safetensors", "type": "flux3"},
+            },
+            "vae": {"class_type": "VAELoader", "inputs": {"vae_name": "flux2-vae.safetensors"}},
+            "source": {"class_type": "LoadImage", "inputs": {"image": ""}},
+            "source_scale": {
+                "class_type": "ImageScale",
+                "inputs": {"image": ["source", 0], "upscale_method": "lanczos", "width": width, "height": height, "crop": "disabled"},
+            },
+            "latent": {"class_type": "VAEEncode", "inputs": {"pixels": ["source_scale", 0], "vae": ["vae", 0]}},
+            "text": {"class_type": "CLIPTextEncode", "inputs": {"text": prompt, "clip": ["clip", 0]}},
+            "guidance": {"class_type": "FluxGuidance", "inputs": {"conditioning": ["text", 0], "guidance": guidance}},
+            "negative": {"class_type": "CLIPTextEncode", "inputs": {"text": "", "clip": ["clip", 0]}},
+            "sampling_model": {
+                "class_type": "ModelSamplingFlux",
+                "inputs": {"model": ["model", 0], "max_shift": 1.15, "base_shift": 0.5, "width": width, "height": height},
+            },
+            "sample": {
+                "class_type": "KSampler",
+                "inputs": {
+                    "model": ["sampling_model", 0], "seed": seed, "steps": steps, "cfg": 1.0,
+                    "sampler_name": "euler", "scheduler": "simple", "positive": ["guidance", 0],
+                    "negative": ["negative", 0], "latent_image": ["latent", 0], "denoise": denoise,
+                },
+            },
+            "decode": {"class_type": "VAEDecode", "inputs": {"samples": ["sample", 0], "vae": ["vae", 0]}},
+            "save": {"class_type": "SaveImage", "inputs": {"images": ["decode", 0], "filename_prefix": "flux3_klein_i2i"}},
+        }
+
+    def _build_flux3_inpaint_workflow(
+        self,
+        prompt: str,
+        width: int,
+        height: int,
+        grow_mask_by: int = 8,
+        steps: int = 50,
+        guidance: float = 3.5,
+        seed: int = -1,
+    ) -> Dict[str, Any]:
+        """构建使用 InpaintModelConditioning 的 FLUX.3 局部重绘工作流。"""
+        import random
+        if seed == -1:
+            seed = random.randint(0, 2**32 - 1)
+
+        return {
+            "model": {
+                "class_type": "UNETLoader",
+                "inputs": {"unet_name": "flux3-image-klein-base-int8-convrot.safetensors", "weight_dtype": "default"},
+            },
+            "clip": {
+                "class_type": "CLIPLoader",
+                "inputs": {"clip_name": "qwen3vl_4b_int8_convrot.safetensors", "type": "flux3"},
+            },
+            "vae": {"class_type": "VAELoader", "inputs": {"vae_name": "flux2-vae.safetensors"}},
+            "source": {"class_type": "LoadImage", "inputs": {"image": ""}},
+            "mask_image": {"class_type": "LoadImage", "inputs": {"image": ""}},
+            "source_scale": {
+                "class_type": "ImageScale",
+                "inputs": {"image": ["source", 0], "upscale_method": "lanczos", "width": width, "height": height, "crop": "disabled"},
+            },
+            "mask_scale": {
+                "class_type": "ImageScale",
+                "inputs": {"image": ["mask_image", 0], "upscale_method": "nearest-exact", "width": width, "height": height, "crop": "disabled"},
+            },
+            "mask": {"class_type": "ImageToMask", "inputs": {"image": ["mask_scale", 0], "channel": "red"}},
+            "mask_grow": {
+                "class_type": "GrowMask",
+                "inputs": {"mask": ["mask", 0], "expand": grow_mask_by, "tapered_corners": True},
+            },
+            "text": {"class_type": "CLIPTextEncode", "inputs": {"text": prompt, "clip": ["clip", 0]}},
+            "guidance": {"class_type": "FluxGuidance", "inputs": {"conditioning": ["text", 0], "guidance": guidance}},
+            "negative": {"class_type": "CLIPTextEncode", "inputs": {"text": "", "clip": ["clip", 0]}},
+            "inpaint": {
+                "class_type": "InpaintModelConditioning",
+                "inputs": {
+                    "positive": ["guidance", 0], "negative": ["negative", 0], "vae": ["vae", 0],
+                    "pixels": ["source_scale", 0], "mask": ["mask_grow", 0], "noise_mask": True,
+                },
+            },
+            "sampling_model": {
+                "class_type": "ModelSamplingFlux",
+                "inputs": {"model": ["model", 0], "max_shift": 1.15, "base_shift": 0.5, "width": width, "height": height},
+            },
+            "sample": {
+                "class_type": "KSampler",
+                "inputs": {
+                    "model": ["sampling_model", 0], "seed": seed, "steps": steps, "cfg": 1.0,
+                    "sampler_name": "euler", "scheduler": "simple", "positive": ["inpaint", 0],
+                    "negative": ["inpaint", 1], "latent_image": ["inpaint", 2], "denoise": 1.0,
+                },
+            },
+            "decode": {"class_type": "VAEDecode", "inputs": {"samples": ["sample", 0], "vae": ["vae", 0]}},
+            "composite": {
+                "class_type": "ImageCompositeMasked",
+                "inputs": {"destination": ["source_scale", 0], "source": ["decode", 0], "x": 0, "y": 0, "resize_source": False, "mask": ["mask", 0]},
+            },
+            "save": {"class_type": "SaveImage", "inputs": {"images": ["composite", 0], "filename_prefix": "flux3_klein_inpaint"}},
+        }
+
+    async def generate_flux3_t2i_and_wait(
+        self, prompt: str, width: int = 1024, height: int = 1024, steps: int = 50,
+        guidance: float = 3.5, seed: int = -1, timeout: int = 600,
+    ) -> Dict[str, Any]:
+        workflow = self._build_flux3_t2i_workflow(prompt, width, height, steps, guidance, seed)
+        return await self._submit_and_wait(workflow, timeout, "FLUX.3 Klein t2i")
+
+    async def generate_flux3_i2i_and_wait(
+        self, source_image_url: str, edit_prompt: str, width: int = 1024, height: int = 1024,
+        steps: int = 30, guidance: float = 3.5, denoise: float = 0.65, seed: int = -1,
+        timeout: int = 600,
+    ) -> Dict[str, Any]:
+        workflow = self._build_flux3_i2i_workflow(edit_prompt, width, height, steps, guidance, denoise, seed)
+        source_upload = await self.upload_image(source_image_url)
+        workflow["source"]["inputs"]["image"] = source_upload["name"]
+        return await self._submit_and_wait(workflow, timeout, "FLUX.3 Klein i2i")
+
+    async def generate_flux3_inpaint_and_wait(
+        self, source_image_url: str, mask_image_data: bytes, edit_prompt: str,
+        width: int = 1024, height: int = 1024, grow_mask_by: int = 8, timeout: int = 600,
+    ) -> Dict[str, Any]:
+        workflow = self._build_flux3_inpaint_workflow(edit_prompt, width, height, grow_mask_by)
+        source_upload = await self.upload_image(source_image_url)
+        mask_upload = await self.upload_image_bytes(mask_image_data, "flux3_inpaint_mask.png")
+        workflow["source"]["inputs"]["image"] = source_upload["name"]
+        workflow["mask_image"]["inputs"]["image"] = mask_upload["name"]
+        return await self._submit_and_wait(workflow, timeout, "FLUX.3 Klein inpaint")
+
     def _build_flux_t2i_workflow(
         self,
         prompt: str,

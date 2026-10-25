@@ -315,11 +315,12 @@ export default function FreeCanvas() {
       // 按模型设置合理默认参数
       const isComfyui = model.startsWith('comfyui')
       const isFlux2 = model === 'comfyui-flux2'
+      const isFlux3 = model === 'comfyui-flux3'
       const isZImageTurbo = model === 'comfyui-z-image-turbo'
       // Flux2 / Z-Image 的 latent 要求宽高是 16 的倍数，自动对齐
       const align16 = (v) => Math.max(16, Math.round(v / 16) * 16)
-      const finalWidth = (isFlux2 || isZImageTurbo) ? align16(width) : width
-      const finalHeight = (isFlux2 || isZImageTurbo) ? align16(height) : height
+      const finalWidth = (isFlux2 || isFlux3 || isZImageTurbo) ? align16(width) : width
+      const finalHeight = (isFlux2 || isFlux3 || isZImageTurbo) ? align16(height) : height
       const payload = {
         prompt,
         model,
@@ -330,6 +331,9 @@ export default function FreeCanvas() {
       if (isFlux2) {
         payload.steps = 20
         payload.cfg = 3.5
+      } else if (isFlux3) {
+        payload.steps = 50
+        payload.cfg = 1.0
       } else if (isZImageTurbo) {
         payload.steps = 8
         payload.cfg = 1.0
@@ -380,9 +384,10 @@ export default function FreeCanvas() {
     if (imgs.length === 0) return
     // Flux2 latent 要求宽高各为 16 的倍数，就近对齐
     const isFlux2 = model === 'comfyui-flux-kontext'
+    const isFlux3 = model === 'comfyui-flux3'
     const align16 = (v) => Math.max(16, Math.round(v / 16) * 16)
-    const finalWidth = isFlux2 ? align16(width) : width
-    const finalHeight = isFlux2 ? align16(height) : height
+    const finalWidth = (isFlux2 || isFlux3) ? align16(width) : width
+    const finalHeight = (isFlux2 || isFlux3) ? align16(height) : height
     setLoading(true)
     try {
       const res = await axios.post('/api/image-to-image', {
@@ -428,7 +433,7 @@ export default function FreeCanvas() {
   }
 
   // 蒙版局部重绘：原图与黑白 mask 交给 FLUX.2 Klein，结果自动连回源图。
-  const handleInpaint = async ({ prompt, maskImage, width, height }) => {
+  const handleInpaint = async ({ prompt, maskImage, model = 'comfyui-flux2-inpaint', width, height }) => {
     const el = selectedElement
     if (!el || el.type !== 'image') return false
     setLoading(true)
@@ -437,7 +442,7 @@ export default function FreeCanvas() {
         prompt,
         base_image: el.src,
         mask_image: maskImage,
-        model: 'comfyui-flux2-inpaint',
+        model,
         width,
         height,
         grow_mask_by: 8,
