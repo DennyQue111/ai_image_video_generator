@@ -32,4 +32,17 @@ export default defineConfig({
       },
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          const normalizedId = id.replace(/\\/g, '/')
+          if (normalizedId.includes('/node_modules/three/examples/')) return 'three-extras'
+          if (normalizedId.includes('/node_modules/three/')) return 'three-vendor'
+          if (normalizedId.includes('/node_modules/reactflow/') || normalizedId.includes('/node_modules/@reactflow/')) return 'reactflow-vendor'
+          if (normalizedId.includes('/node_modules/react-dom/') || normalizedId.includes('/node_modules/react/') || normalizedId.includes('/node_modules/scheduler/')) return 'react-vendor'
+        },
+      },
+    },
+  },
 })

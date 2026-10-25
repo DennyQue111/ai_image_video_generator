@@ -1,12 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import ReactFlow, { Background, Controls, MiniMap } from 'reactflow'
 import axios from 'axios'
 import 'reactflow/dist/style.css'
 import { useCanvasElements } from '../hooks/useCanvasElements'
 import ImageNode from '../components/ImageNode'
-import ModelNode from '../components/ModelNode'
-import DirectorStageNode from '../components/DirectorStageNode'
+const ModelNode = lazy(() => import('../components/ModelNode'))
+const DirectorStageNode = lazy(() => import('../components/DirectorStageNode'))
 import CameraAngleNode from '../components/CameraAngleNode'
 import Toolbar from '../components/Toolbar'
 import RightPanel from '../components/RightPanel'
@@ -979,35 +979,37 @@ export default function FreeCanvas() {
 
       {/* 中间画布 — React Flow 节点式画布 */}
       <div className="canvas-container">
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          nodeTypes={nodeTypes}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          onConnect={onConnect}
-          onSelectionChange={onSelectionChange}
-          onPaneClick={() => selectNode(null)}
-          zoomOnScroll={!selectedDirectorStage}
-          deleteKeyCode={['Delete', 'Backspace']}
-          multiSelectionKeyCode={['Control', 'Meta', 'Shift']}
-          selectionOnDrag
-          fitView
-          fitViewOptions={{ padding: 0.2 }}
-          defaultEdgeOptions={{
-            animated: true,
-            style: { stroke: '#3b82f6', strokeWidth: 2 },
-          }}
-          proOptions={{ hideAttribution: true }}
-        >
-          <Background color="#2a2a4a" gap={20} size={1} />
-          <Controls showInteractive={false} />
-          <MiniMap
-            nodeColor={() => '#3b82f6'}
-            maskColor="rgba(13, 13, 26, 0.7)"
-            style={{ background: '#1a1a2e' }}
-          />
-        </ReactFlow>
+        <Suspense fallback={<div className="canvas-hint">正在加载 3D 节点…</div>}>
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            nodeTypes={nodeTypes}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onConnect={onConnect}
+            onSelectionChange={onSelectionChange}
+            onPaneClick={() => selectNode(null)}
+            zoomOnScroll={!selectedDirectorStage}
+            deleteKeyCode={['Delete', 'Backspace']}
+            multiSelectionKeyCode={['Control', 'Meta', 'Shift']}
+            selectionOnDrag
+            fitView
+            fitViewOptions={{ padding: 0.2 }}
+            defaultEdgeOptions={{
+              animated: true,
+              style: { stroke: '#3b82f6', strokeWidth: 2 },
+            }}
+            proOptions={{ hideAttribution: true }}
+          >
+            <Background color="#2a2a4a" gap={20} size={1} />
+            <Controls showInteractive={false} />
+            <MiniMap
+              nodeColor={() => '#3b82f6'}
+              maskColor="rgba(13, 13, 26, 0.7)"
+              style={{ background: '#1a1a2e' }}
+            />
+          </ReactFlow>
+        </Suspense>
         {nodes.length === 0 && (
           <div className="canvas-hint">
             上传图片或使用文生图开始创作

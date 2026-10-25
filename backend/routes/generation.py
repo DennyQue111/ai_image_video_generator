@@ -319,6 +319,31 @@ async def upload_image(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"上传失败: {str(e)}")
 
 
+@router.post("/api/editing-media/upload")
+async def upload_editing_media(file: UploadFile = File(...)):
+    """Store a user-imported image or video for persistent editing projects."""
+    ext = Path(file.filename or "").suffix.lower()
+    supported = {".png", ".jpg", ".jpeg", ".webp", ".mp4", ".webm", ".mov", ".mkv"}
+    if ext not in supported:
+        raise HTTPException(status_code=400, detail="仅支持 PNG、JPG、WEBP、MP4、WEBM、MOV 或 MKV 文件")
+    upload_dir = OUTPUT_DIR / "editing_uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    filename = f"editing_{uuid.uuid4().hex[:12]}{ext}"
+    save_path = upload_dir / filename
+    try:
+        with save_path.open("wb") as target:
+            shutil.copyfileobj(file.file, target)
+        relative_path = save_path.relative_to(PROJECT_FILE_PATH)
+        return {"success": True, "filename": file.filename or filename,
+                "url": f"/static/projects/{relative_path.as_posix()}",
+                "asset_id": relative_path.as_posix(),
+                "type": "video" if ext in {".mp4", ".webm", ".mov", ".mkv"} else "image"}
+    except Exception as exc:
+        save_path.unlink(missing_ok=True)
+        logger.exception("[API] Editing media upload failed")
+        raise HTTPException(status_code=500, detail=f"素材上传失败: {exc}") from exc
+
+
 @router.get("/api/media-library")
 async def list_generated_media():
     """List generated image/video assets for the editing studio media bin."""

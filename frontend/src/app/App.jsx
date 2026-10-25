@@ -1,8 +1,10 @@
+import { lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom'
-import FreeCanvas from '../features/free-canvas/pages/FreeCanvas'
-import ProjectManagement from '../features/project-management/pages/ProjectManagement'
-import EditingStudio from '../features/editing-studio/pages/EditingStudio'
 import '../features/free-canvas/styles/Canvas.css'
+
+const FreeCanvas = lazy(() => import('../features/free-canvas/pages/FreeCanvas'))
+const ProjectManagement = lazy(() => import('../features/project-management/pages/ProjectManagement'))
+const EditingStudio = lazy(() => import('../features/editing-studio/pages/EditingStudio'))
 
 /**
  * 顶部页签导航
@@ -33,12 +35,14 @@ function Layout() {
     <div style={{ display: 'flex', flexDirection: 'column', width: '100vw', height: '100vh', overflow: 'hidden' }}>
       <TabNav />
       <div style={{ flex: 1, overflow: 'hidden' }}>
-        <Routes>
-          <Route path="/" element={<FreeCanvas />} />
-          <Route path="/free_canvas" element={<FreeCanvas />} />
-          <Route path="/shot_breakdown" element={<ProjectManagement />} />
-          <Route path="/editing" element={<EditingStudio />} />
-        </Routes>
+        <Suspense fallback={<div style={{ height: '100%', display: 'grid', placeItems: 'center', color: '#94a3b8' }}>正在加载页面…</div>}>
+          <Routes>
+            <Route path="/" element={<FreeCanvas />} />
+            <Route path="/free_canvas" element={<FreeCanvas />} />
+            <Route path="/shot_breakdown" element={<ProjectManagement />} />
+            <Route path="/editing" element={<EditingStudio />} />
+          </Routes>
+        </Suspense>
       </div>
     </div>
   )

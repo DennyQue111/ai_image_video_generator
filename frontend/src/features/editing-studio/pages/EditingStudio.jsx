@@ -1,6 +1,8 @@
-import { Clapperboard, RefreshCw } from 'lucide-react'
-import { useState } from 'react'
+import { RefreshCw } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import axios from 'axios'
 import ClipPropertiesPanel from '../components/ClipPropertiesPanel'
+import EditingProjectBar from '../components/EditingProjectBar'
 import MediaLibraryPanel from '../components/MediaLibraryPanel'
 import PreviewPanel from '../components/PreviewPanel'
 import TimelinePanel from '../components/TimelinePanel'
@@ -14,10 +16,12 @@ export default function EditingStudio() {
   const [libraryWidth, setLibraryWidth] = useState(260)
   const [propertiesWidth, setPropertiesWidth] = useState(260)
   const [timelineHeight, setTimelineHeight] = useState(230)
+  const [zoomPercent, setZoomPercent] = useState(66.67)
+  const [currentProject, setCurrentProject] = useState(() => localStorage.getItem('ai-image-video-generator:editing-studio:current-project') || '')
   const {
     library, clips, tracks, addTrack, removeTrack, selected, selectedId, playhead, setPlayhead, playing, setPlaying,
-    libraryError, videoRef, dragId, activeInfo, totalDuration, loadLibrary, addAsset, moveClipToTrack,
-    addLocalFiles, updateClip, selectClip, removeSelected, splitSelected, moveClip,
+    libraryError, videoRef, activeInfo, totalDuration, loadLibrary, addAsset,
+    addLocalFiles, updateClip, selectClip, removeSelected, splitSelected, moveClip, undo, canUndo, loadProject,
     handleMetadata, onVideoTime, onVideoEnded,
   } = timeline
 
@@ -27,10 +31,54 @@ export default function EditingStudio() {
     setPlaying((value) => !value)
   }
 
+  useEffect(() => {
+    const handleShortcut = (event) => {
+      const target = event.target
+      if (target instanceof HTMLElement && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) return
+      if (event.ctrlKey && event.key.toLowerCase() === 'b') {
+        event.preventDefault()
+        splitSelected()
+      } else if (event.ctrlKey && event.key.toLowerCase() === 'z' && canUndo) {
+        event.preventDefault()
+        undo()
+      } else if (event.key === 'Backspace' && selected) {
+        event.preventDefault()
+        removeSelected()
+      }
+    }
+    window.addEventListener('keydown', handleShortcut)
+    return () => window.removeEventListener('keydown', handleShortcut)
+  }, [splitSelected, removeSelected, selected, undo, canUndo])
+
+  const saveProject = async (name) => {
+    const response = await axios.post('/api/editing-projects/save', {
+      name,
+      clips: clips.filter((clip) => !clip.temporary),
+      tracks,
+    })
+    setCurrentProject(response.data.name)
+    localStorage.setItem('ai-image-video-generator:editing-studio:current-project', response.data.name)
+    return response.data.name
+  }
+
+  const openProject = async (name) => {
+    const response = await axios.get(`/api/editing-projects/${encodeURIComponent(name)}`)
+    loadProject(response.data.project)
+    setCurrentProject(response.data.project.name || name)
+    localStorage.setItem('ai-image-video-generator:editing-studio:current-project', response.data.project.name || name)
+  }
+
+  const deleteProject = async (name) => {
+    await axios.delete(`/api/editing-projects/${encodeURIComponent(name)}`)
+    loadProject({})
+    setCurrentProject('')
+    localStorage.removeItem('ai-image-video-generator:editing-studio:current-project')
+  }
+
   return (
     <main className="editing-studio">
       <header className="editing-toolbar">
-        <div className="editing-brand"><Clapperboard size={20} /><div><strong>剪辑台</strong><span>基础时间线 · 本地项目</span></div></div>
+        <EditingProjectBar currentName={currentProject} onNameChange={setCurrentProject} onSave={saveProject} onLoad={openProject} onDelete={deleteProject} />
         <div className="editing-toolbar-actions">
           <button className="edit-tool-button" onClick={loadLibrary}><RefreshCw size={15} />刷新素材</button>
           <button className="edit-export-button" disabled title="MP4 导出将在下一阶段接入">导出视频（开发中）</button>
@@ -88,8 +136,6 @@ export default function EditingStudio() {
         onSelectClip={selectClip}
         onSetPlayhead={(time) => { setPlaying(false); setPlayhead(time) }}
         onMoveClip={moveClip}
-        onMoveClipToTrack={moveClipToTrack}
-        dragId={dragId}
         tracks={tracks}
         onAddTrack={addTrack}
         onRemoveTrack={removeTrack}
@@ -97,6 +143,8 @@ export default function EditingStudio() {
         onTogglePlayback={togglePlayback}
         compactClips={compactClips}
         onToggleCompact={() => setCompactClips((value) => !value)}
+        zoomPercent={zoomPercent}
+        onZoomChange={setZoomPercent}
         style={{ height: timelineHeight }}
       />
     </main>
