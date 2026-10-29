@@ -90,7 +90,9 @@ export default function TimelinePanel({ clips, tracks, selectedId, activeClipId,
       startClientY: event.clientY,
       grabOffsetX: event.clientX - button.getBoundingClientRect().left,
       candidateStart: clip.timelineStart,
+      originalStart: clip.timelineStart,
       targetTrackId: clip.trackId || 'video-1',
+      element: button,
       moved: false,
     }
     button.setPointerCapture(event.pointerId)
@@ -109,7 +111,7 @@ export default function TimelinePanel({ clips, tracks, selectedId, activeClipId,
     session.candidateStart = Math.max(0, (event.clientX - rect.left - session.grabOffsetX) / pixelsPerSecond)
     const hoveredTrack = document.elementFromPoint(event.clientX, event.clientY)?.closest('.timeline-track')
     session.targetTrackId = hoveredTrack?.dataset.trackType === (session.clipType === 'audio' ? 'audio' : 'video') ? hoveredTrack.dataset.trackId : session.sourceTrackId
-    setDragPreview({ clipId: session.clipId, timelineStart: session.candidateStart })
+    session.element.style.transform = `translate3d(${(session.candidateStart - session.originalStart) * pixelsPerSecond}px, 0, 0)`
   }
   const finishClipDrag = (event, cancelled = false) => {
     if (trimDrag.current?.pointerId === event.pointerId) {
@@ -124,7 +126,7 @@ export default function TimelinePanel({ clips, tracks, selectedId, activeClipId,
     const session = clipDrag.current
     if (!session || session.pointerId !== event.pointerId) return
     clipDrag.current = null
-    setDragPreview(null)
+    session.element.style.transform = ''
     if (session.moved && !cancelled) {
       const hoveredTrack = document.elementFromPoint(event.clientX, event.clientY)?.closest('.timeline-track')
       const trackId = hoveredTrack?.dataset.trackType === (session.clipType === 'audio' ? 'audio' : 'video') ? hoveredTrack.dataset.trackId : session.sourceTrackId
@@ -190,7 +192,7 @@ export default function TimelinePanel({ clips, tracks, selectedId, activeClipId,
                     onSelectClip(clip.id)
                   }}
                   className={`timeline-clip ${selectedId === clip.id ? 'selected' : ''} ${activeClipId === clip.id ? 'under-playhead' : ''}`}
-                  style={{ width, left: ((dragPreview?.clipId === clip.id && !dragPreview.edge ? dragPreview.timelineStart : clip.timelineStart) + leftDelta) * pixelsPerSecond }}
+                  style={{ width, left: (clip.timelineStart + leftDelta) * pixelsPerSecond }}
                   title={clip.name}
                 >
                   {clip.type === 'audio' ? <><span className="timeline-audio-wave" aria-hidden="true">▂▅▃▇▅▂▆▄▇▃▅▂▆▃▇▄▅▂▆▃▇▅▂▆▄▇▃▅▂</span><span className="timeline-clip-label">{clip.name}</span></> : <><span className="timeline-clip-thumb">{clip.type === 'video' ? <video src={clip.src} muted preload="metadata" /> : <img src={clip.src} alt="" />}</span><span className="timeline-clip-label">{clip.name}</span></>}
