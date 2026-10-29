@@ -8,7 +8,7 @@ const MODEL_OPTIONS = [
     group: 'ComfyUI 工作流',
     options: [
       { value: 'comfyui-ltx', label: 'LTX 2.3 图生视频（首帧）' },
-      { value: 'comfyui-minimax', label: 'MiniMax H3（首帧锚定 + 多图参考）' },
+      { value: 'comfyui-minimax', label: 'MiniMax H3（首帧 / 尾帧锚定 + 多图参考）' },
     ],
   },
 ]
@@ -26,6 +26,8 @@ export default function ImageToVideo() {
   // Both models can use a first frame; MiniMax may combine it with reference images.
   const [firstFrameUrl, setFirstFrameUrl] = useState('')
   const [firstFramePreview, setFirstFramePreview] = useState('')
+  const [lastFrameUrl, setLastFrameUrl] = useState('')
+  const [lastFramePreview, setLastFramePreview] = useState('')
   const [refImages, setRefImages] = useState([]) // { file, url, serverUrl, uploading }
   const [dialogue, setDialogue] = useState('')
   const [voiceInstruct, setVoiceInstruct] = useState('')
@@ -38,6 +40,7 @@ export default function ImageToVideo() {
   const [error, setError] = useState('')
   const fileInputRef = useRef(null)
   const refFileInputRef = useRef(null)
+  const lastFrameFileInputRef = useRef(null)
 
   const isMinimax = model === 'comfyui-minimax'
 
@@ -69,6 +72,28 @@ export default function ImageToVideo() {
   const removeImage = () => {
     setFirstFrameUrl('')
     setFirstFramePreview('')
+  }
+
+  const handleLastFrameChange = async (e) => {
+    const file = e.target.files[0]
+    if (!file) return
+    const previewUrl = URL.createObjectURL(file)
+    setLastFramePreview(previewUrl)
+    setUploading(true)
+    setError('')
+    const formData = new FormData()
+    formData.append('file', file)
+    try {
+      const res = await axios.post('/api/upload-image', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      setLastFrameUrl(res.data.url)
+    } catch (err) {
+      setLastFramePreview('')
+      setError(err.response?.data?.detail || '尾帧图片上传失败')
+    } finally {
+      setUploading(false)
+    }
   }
 
   // MiniMax 多图上传
@@ -142,8 +167,13 @@ export default function ImageToVideo() {
 
       if (isMinimax) {
         const readyImages = refImages.filter((img) => img.serverUrl && !img.uploading)
-        if (!readyImages.length && !firstFrameUrl) {
-          setError('请上传首帧图片或至少一张参考图片')
+        if (lastFrameUrl && readyImages.length) {
+          setError('首尾帧锁定模式暂不支持同时添加参考图；请清空参考图，或改用首帧 + 多参模式')
+          setLoading(false)
+          return
+        }
+        if (!readyImages.length && !firstFrameUrl && !lastFrameUrl) {
+          setError('请上传首帧、尾帧图片或至少一张参考图片')
           setLoading(false)
           return
         }
@@ -155,9 +185,11 @@ export default function ImageToVideo() {
         }
         payload.reference_images = readyImages.map((img) => img.serverUrl)
         if (firstFrameUrl) payload.first_frame_image = firstFrameUrl
+        if (lastFrameUrl) payload.last_frame_image = lastFrameUrl
         const preset = RESOLUTION_PRESETS[resolutionPreset]
         payload.width = preset.width
         payload.height = preset.height
+        payload.workflow_type = 'int8'
       } else {
         if (!firstFrameUrl) {
           setError('请上传首帧图片')
@@ -261,6 +293,31 @@ export default function ImageToVideo() {
               />
             </div>
         </div>
+
+        {isMinimax && (
+          <div className="form-row">
+            <div className="form-group full">
+              <label className="form-label">尾帧图片（可选；与首帧配对锁定起止画面，不与多参考图同用）</label>
+              {!lastFramePreview ? (
+                <div className="image-upload-zone" onClick={() => lastFrameFileInputRef.current?.click()}>
+                  <Upload size={28} />
+                  <div>点击上传尾帧图片</div>
+                  <div style={{ fontSize: '12px', marginTop: '4px' }}>首帧 + 尾帧锁定模式；如需人物参考，请改用首帧 + 多参模式</div>
+                </div>
+              ) : (
+                <div className="image-preview-list">
+                  <div className="image-preview-item" style={{ width: 160, height: 160 }}>
+                    <img src={lastFramePreview} alt="last frame" />
+                    <button className="image-preview-remove" onClick={() => { setLastFrameUrl(''); setLastFramePreview('') }} disabled={uploading}>
+                      <X size={14} />
+                    </button>
+                  </div>
+                </div>
+              )}
+              <input ref={lastFrameFileInputRef} type="file" className="image-upload-input" accept="image/*" onChange={handleLastFrameChange} />
+            </div>
+          </div>
+        )}
 
         {/* MiniMax: 多图参考上传，可与精确首帧锚点组合 */}
         {isMinimax && (

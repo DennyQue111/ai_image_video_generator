@@ -14,7 +14,8 @@ import requests
 from fractions import Fraction
 from pathlib import Path
 from typing import List
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, HTTPException, UploadFile, File, BackgroundTasks
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from constants import PROJECT_FILE_PATH
@@ -31,6 +32,151 @@ style_config = StyleConfig()
 
 OUTPUT_DIR = Path(PROJECT_FILE_PATH) / "_temp" / "generator_outputs"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+EDITING_EXPORT_DIR = OUTPUT_DIR / "editing_exports"
+EDITING_EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+_EDITING_EXPORTS = {}
+
+
+class EditingExportRequest(BaseModel):
+    clips: list = Field(default_factory=list)
+    video_clips: list = Field(default_factory=list)
+    audio_clips: list = Field(default_factory=list)
+    mode: str = "video"
+    filename: str = "剪辑台导出"
+    format: str = "mp4"
+    resolution: str = "source"
+    quality: str = "high"
+    frame_rate: float = 24
+
+
+def _run_editing_export(export_id: str, request_data: dict):
+    state = _EDITING_EXPORTS[export_id]
+    work_dir = EDITING_EXPORT_DIR / export_id
+    work_dir.mkdir(parents=True, exist_ok=True)
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        state.update(status="error", error="未找到 FFmpeg，无法导出视频")
+        return
+    try:
+        mode = request_data.get("mode")
+        preferred = request_data.get("video_clips") if mode == "video" else request_data.get("audio_clips")
+        raw_clips = preferred if preferred is not None else request_data.get("clips", [])
+        clips = sorted(raw_clips, key=lambda item: float(item.get("timelineStart", 0)))
+        if not clips:
+            raise ValueError("时间线上没有可导出的片段")
+        fps = max(1, min(120, float(request_data.get("frame_rate") or 24)))
+        inputs, filters, video_segments, audio_segments = [], [], [], []
+        cursor = 0.0
+        width, height = 1920, 1080
+        resolution = request_data.get("resolution", "source")
+        if resolution in {"1080p", "720p", "480p"}:
+            height = int(resolution[:-1])
+            width = round(height * 16 / 9)
+        quality = request_data.get("quality", "high")
+        crf = {"high": 18, "medium": 23, "low": 28}.get(quality, 18)
+        video_mode = request_data.get("mode") == "video"
+        include_audio = video_mode and request_data.get("audio", True)
+        if resolution == "source" and mode == "video":
+            for clip in clips:
+                if clip.get("type") not in {"video", "image"}: continue
+                candidate = (Path(PROJECT_FILE_PATH) / str(clip.get("assetId") or "")).resolve()
+                probe = shutil.which("ffprobe")
+                if not probe or not candidate.is_file(): continue
+                probe_result = subprocess.run([probe, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "json", str(candidate)], capture_output=True, text=True, timeout=15)
+                streams = json.loads(probe_result.stdout).get("streams", []) if probe_result.returncode == 0 else []
+                if streams:
+                    width = min(1920, max(2, int(streams[0].get("width", width))))
+                    height = min(1080, max(2, int(streams[0].get("height", height))))
+                    width -= width % 2; height -= height % 2
+                    break
+        for index, clip in enumerate(clips):
+            duration = max(0.04, float(clip.get("end", 0)) - float(clip.get("start", 0)))
+            start = max(cursor, float(clip.get("timelineStart", cursor)))
+            if start > cursor:
+                gap_index = sum(1 for token in inputs if token == "-i")
+                inputs.extend(["-f", "lavfi", "-t", str(start - cursor), "-i", f"color=c=black:s={width}x{height}:r={fps}"])
+                if video_mode:
+                    filters.append(f"[{gap_index}:v]setsar=1,fps={fps},format=yuv420p,setpts=PTS-STARTPTS[v{gap_index}]")
+                    video_segments.append(f"[v{gap_index}]")
+                if include_audio:
+                    filters.append(f"anullsrc=r=48000:cl=stereo:d={start - cursor},asetpts=PTS-STARTPTS[a{gap_index}]")
+                    audio_segments.append(f"[a{gap_index}]")
+                cursor = start
+            asset_id = str(clip.get("assetId") or "")
+            source = (Path(PROJECT_FILE_PATH) / asset_id).resolve()
+            try:
+                source.relative_to(OUTPUT_DIR.resolve())
+            except ValueError as exc:
+                raise ValueError("片段素材路径无效") from exc
+            if not source.is_file():
+                raise ValueError(f"找不到素材：{clip.get('name', asset_id)}")
+            input_index = sum(1 for token in inputs if token == "-i")
+            if clip.get("type") == "image":
+                inputs.extend(["-loop", "1", "-t", str(duration), "-i", str(source)])
+            else:
+                inputs.extend(["-i", str(source)])
+            if video_mode and clip.get("type") == "image":
+                filters.append(f"[{input_index}:v]scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps},format=yuv420p,setpts=PTS-STARTPTS[v{index}]")
+                video_segments.append(f"[v{index}]")
+            elif video_mode:
+                source_start = float(clip.get("start", 0))
+                filters.append(f"[{input_index}:v]trim=start={source_start}:duration={duration},scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps},format=yuv420p,setpts=PTS-STARTPTS[v{index}]")
+                video_segments.append(f"[v{index}]")
+            if mode == "audio" and clip.get("type") == "audio":
+                source_start = float(clip.get("start", 0))
+                filters.append(f"[{input_index}:a]atrim=start={source_start}:duration={duration},asetpts=PTS-STARTPTS[a{index}]")
+                audio_segments.append(f"[a{index}]")
+            elif include_audio and clip.get("type") == "video":
+                probe = shutil.which("ffprobe")
+                has_audio = False
+                if probe:
+                    probe_result = subprocess.run([probe, "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=index", "-of", "csv=p=0", str(source)], capture_output=True, text=True, timeout=15)
+                    has_audio = probe_result.returncode == 0 and bool(probe_result.stdout.strip())
+                if has_audio:
+                    filters.append(f"[{input_index}:a]atrim=start={float(clip.get('start', 0))}:duration={duration},asetpts=PTS-STARTPTS[a{index}]")
+                else:
+                    filters.append(f"anullsrc=r=48000:cl=stereo:d={duration},asetpts=PTS-STARTPTS[a{index}]")
+                audio_segments.append(f"[a{index}]")
+            elif include_audio:
+                filters.append(f"anullsrc=r=48000:cl=stereo:d={duration},asetpts=PTS-STARTPTS[a{index}]")
+                audio_segments.append(f"[a{index}]")
+            cursor = start + duration
+        ext = request_data.get("format", "mp4")
+        output = EDITING_EXPORT_DIR / f"{export_id}.{ext}"
+        if mode == "audio":
+            if not audio_segments:
+                raise ValueError("时间线中的视频没有可用音轨，无法导出音频")
+            filters.append(f"{''.join(audio_segments)}concat=n={len(audio_segments)}:v=0:a=1[outa]")
+            maps = ["-map", "[outa]"]
+        else:
+            filters.append(f"{''.join(video_segments)}concat=n={len(video_segments)}:v=1:a=0[outv]")
+            maps = ["-map", "[outv]"]
+            if request_data.get("audio", True):
+                if audio_segments:
+                    filters.append(f"{''.join(audio_segments)}concat=n={len(audio_segments)}:v=0:a=1[outa]")
+                    maps.extend(["-map", "[outa]"])
+        command = [ffmpeg, "-y", *inputs, "-filter_complex", ";".join(filters), *maps]
+        if mode == "audio":
+            codecs = {"mp3": ["-c:a", "libmp3lame", "-q:a", "2"], "wav": ["-c:a", "pcm_s16le"], "aac": ["-c:a", "aac", "-b:a", "192k"], "m4a": ["-c:a", "aac", "-b:a", "192k"]}
+            command.extend(codecs.get(ext, codecs["mp3"]))
+        else:
+            command.extend(["-c:v", "libx264", "-crf", str(crf), "-preset", "medium", "-r", str(fps)])
+            if request_data.get("audio", True):
+                command.extend(["-c:a", "aac", "-b:a", "192k"])
+            if ext == "webm": command.extend(["-c:v", "libvpx-vp9", "-crf", str(crf), "-b:v", "0", "-c:a", "libopus"])
+            if ext == "mov": command.extend(["-movflags", "+faststart"])
+        command.append(str(output))
+        state.update(status="processing", progress=5)
+        process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        _, stderr = process.communicate()
+        if process.returncode != 0:
+            raise RuntimeError(stderr[-1800:] or "FFmpeg 导出失败")
+        state.update(status="completed", progress=100, filename=output.name, path=str(output))
+    except Exception as exc:
+        logger.exception("Editing export failed")
+        state.update(status="error", error=str(exc))
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
 
 
 # ============ 请求模型 ============
@@ -73,7 +219,8 @@ class CameraAngleRequest(BaseModel):
 
 class ImageToVideoRequest(BaseModel):
     prompt: str = Field(..., description="视频画面描述（英文）")
-    first_frame_image: str = Field("", description="首帧图片 URL（LTX 必填；MiniMax H3 与 reference_images 同传时，通过 Ref2VA + MiniMaxH3AddGuide 锚定第0帧）")
+    first_frame_image: str = Field("", description="首帧图片 URL（LTX 必填；MiniMax H3 可与普通参考图组合）")
+    last_frame_image: str = Field("", description="尾帧图片 URL（MiniMax H3 可选；首尾帧锁定模式不与普通参考图组合）")
     reference_images: list = Field(default=[], description="参考图片 URL 列表（MiniMax H3 用，1-9 张）")
     model: str = "comfyui-ltx"
     dialogue: str = ""
@@ -82,7 +229,7 @@ class ImageToVideoRequest(BaseModel):
     fps: int = 24
     width: int = 0
     height: int = 0
-    workflow_type: str = "pruned"  # "pruned" 截肢版 | "int8" 完整 int8 版
+    workflow_type: str = "int8"  # MiniMax H3 默认完整 int8 版；显式传 pruned 才使用截肢版
 
 
 class InpaintRequest(BaseModel):
@@ -360,6 +507,46 @@ async def get_editing_media_frame_rate(asset_id: str):
     ffprobe = shutil.which("ffprobe")
     if not ffprobe:
         return {"success": True, "fps": None}
+
+
+@router.post("/api/editing-exports")
+async def create_editing_export(request: EditingExportRequest, background_tasks: BackgroundTasks):
+    mode = request.mode.lower()
+    video_formats = {"mp4", "mov", "webm"}
+    audio_formats = {"mp3", "wav", "aac", "m4a"}
+    allowed = audio_formats if mode == "audio" else video_formats
+    extension = request.format.lower().lstrip(".")
+    if mode not in {"video", "audio"} or extension not in allowed:
+        raise HTTPException(status_code=400, detail="导出类型或格式不支持")
+    if not request.clips:
+        raise HTTPException(status_code=400, detail="时间线上没有可导出的片段")
+    export_id = uuid.uuid4().hex
+    _EDITING_EXPORTS[export_id] = {"status": "queued", "progress": 0, "error": None}
+    background_tasks.add_task(_run_editing_export, export_id, request.model_dump() if hasattr(request, "model_dump") else request.dict())
+    return {"success": True, "export_id": export_id}
+
+
+@router.get("/api/editing-exports/{export_id}")
+async def get_editing_export(export_id: str):
+    state = _EDITING_EXPORTS.get(export_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="导出任务不存在")
+    return {key: value for key, value in state.items() if key != "path"}
+
+
+@router.get("/api/editing-exports/{export_id}/download")
+async def download_editing_export(export_id: str):
+    state = _EDITING_EXPORTS.get(export_id)
+    if not state or state.get("status") != "completed":
+        raise HTTPException(status_code=404, detail="导出文件尚未完成")
+    path = Path(state.get("path", "")).resolve()
+    try:
+        path.relative_to(EDITING_EXPORT_DIR.resolve())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="导出文件路径无效") from exc
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="导出文件不存在")
+    return FileResponse(path, filename=path.name)
     try:
         result = subprocess.run(
             [ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=avg_frame_rate,r_frame_rate", "-of", "json", str(media_path)],
@@ -801,7 +988,7 @@ async def image_to_video(request: ImageToVideoRequest):
     """
     图生视频
     - comfyui-ltx: 调用 ComfyUI LTX 2.3 工作流（首帧图生视频）
-    - comfyui-minimax: 调用 ComfyUI MiniMax H3；首帧 + 多参考图时使用 Ref2VA + 官方 AddGuide 锚定 frame 0
+    - comfyui-minimax: 首帧+多参走 Ref2VA/AddGuide；首尾锁定单独走 FL2VA；纯多参走 Ref2VA
     """
     logger.info("[API] /api/image-to-video called, model=%s, fps=%s, duration=%s, has_dialogue=%s",
                 request.model, request.fps, request.duration, bool(request.dialogue))
@@ -822,12 +1009,20 @@ async def image_to_video(request: ImageToVideoRequest):
 
     try:
         if request.model == "comfyui-minimax":
-            # MiniMax H3 首帧+多图使用官方 Ref2VA + AddGuide 组合，不走 T8 节点禁用的 Hybrid 分支。
+            # Use separate supported paths; native last-frame locking cannot be combined with refs.
             ref_urls = [_to_full_url(u) for u in request.reference_images if u]
             first_frame_url = _to_full_url(request.first_frame_image) if request.first_frame_image else ""
-            if not ref_urls and not first_frame_url:
-                raise HTTPException(status_code=400, detail="MiniMax 需要首帧图片或至少 1 张参考图片")
-            max_ref_urls = 8 if first_frame_url else 9
+            last_frame_url = _to_full_url(request.last_frame_image) if request.last_frame_image else ""
+            if last_frame_url and ref_urls:
+                raise HTTPException(
+                    status_code=400,
+                    detail="首尾帧锁定与多参考图是两种独立模式；请清空参考图，或改用首帧+多参考图。",
+                )
+            if not ref_urls and not first_frame_url and not last_frame_url:
+                raise HTTPException(status_code=400, detail="MiniMax 需要首帧、尾帧图片或至少 1 张参考图片")
+            # AddGuide consumes a Picture slot only for first-frame + refs without a tail frame.
+            # Native Hybrid keeps first/last anchors separate from its reference images.
+            max_ref_urls = 8 if first_frame_url and ref_urls and not last_frame_url else 9
             if len(ref_urls) > max_ref_urls:
                 raise HTTPException(
                     status_code=400,
@@ -845,6 +1040,7 @@ async def image_to_video(request: ImageToVideoRequest):
                 prompt=request.prompt,
                 reference_image_urls=ref_urls,
                 first_frame_image_url=first_frame_url,
+                last_frame_image_url=last_frame_url,
                 width=width,
                 height=height,
                 duration_seconds=duration,

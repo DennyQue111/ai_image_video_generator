@@ -6,6 +6,7 @@ import EditingProjectBar from '../components/EditingProjectBar'
 import MediaLibraryPanel from '../components/MediaLibraryPanel'
 import PreviewPanel from '../components/PreviewPanel'
 import TimelinePanel from '../components/TimelinePanel'
+import ExportDialog from '../components/ExportDialog'
 import { useEditingTimeline } from '../hooks/useEditingTimeline'
 import '../styles/EditingStudio.css'
 
@@ -18,10 +19,12 @@ export default function EditingStudio() {
   const [timelineHeight, setTimelineHeight] = useState(230)
   const [zoomPercent, setZoomPercent] = useState(66.67)
   const [currentProject, setCurrentProject] = useState(() => localStorage.getItem('ai-image-video-generator:editing-studio:current-project') || '')
+  const [exportOpen, setExportOpen] = useState(false)
   const {
     library, clips, tracks, addTrack, removeTrack, selected, selectedId, playhead, setPlayhead, playing, setPlaying,
+    frameRate, setProjectFrameRate,
     libraryError, videoRef, activeInfo, totalDuration, loadLibrary, addAsset,
-    addLocalFiles, updateClip, selectClip, removeSelected, splitSelected, moveClip, undo, canUndo, loadProject,
+    addLocalFiles, updateClip, selectClip, removeSelected, splitSelected, moveClip, trimClip, undo, canUndo, loadProject,
     handleMetadata, onVideoTime, onVideoEnded,
   } = timeline
 
@@ -38,9 +41,9 @@ export default function EditingStudio() {
       if (event.ctrlKey && event.key.toLowerCase() === 'b') {
         event.preventDefault()
         splitSelected()
-      } else if (event.ctrlKey && event.key.toLowerCase() === 'z' && canUndo) {
+      } else if (event.ctrlKey && !event.shiftKey && event.key.toLowerCase() === 'z') {
         event.preventDefault()
-        undo()
+        if (canUndo) undo()
       } else if (event.key === 'Backspace' && selected) {
         event.preventDefault()
         removeSelected()
@@ -55,6 +58,7 @@ export default function EditingStudio() {
       name,
       clips: clips.filter((clip) => !clip.temporary),
       tracks,
+      frame_rate: frameRate,
     })
     setCurrentProject(response.data.name)
     localStorage.setItem('ai-image-video-generator:editing-studio:current-project', response.data.name)
@@ -78,10 +82,10 @@ export default function EditingStudio() {
   return (
     <main className="editing-studio">
       <header className="editing-toolbar">
-        <EditingProjectBar currentName={currentProject} onNameChange={setCurrentProject} onSave={saveProject} onLoad={openProject} onDelete={deleteProject} />
+        <EditingProjectBar currentName={currentProject} onNameChange={setCurrentProject} onSave={saveProject} onLoad={openProject} onDelete={deleteProject} frameRate={frameRate} onFrameRateChange={setProjectFrameRate} />
         <div className="editing-toolbar-actions">
           <button className="edit-tool-button" onClick={loadLibrary}><RefreshCw size={15} />刷新素材</button>
-          <button className="edit-export-button" disabled title="MP4 导出将在下一阶段接入">导出视频（开发中）</button>
+          <button className="edit-export-button" disabled={!clips.length} onClick={() => setExportOpen(true)}>导出视频</button>
         </div>
       </header>
 
@@ -99,6 +103,7 @@ export default function EditingStudio() {
           videoRef={videoRef}
           playhead={playhead}
           totalDuration={totalDuration}
+          timelineFrameRate={frameRate || 24}
           playing={playing}
           onTogglePlayback={togglePlayback}
           onSeek={(time) => { setPlaying(false); setPlayhead(time) }}
@@ -116,7 +121,10 @@ export default function EditingStudio() {
           const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up) }
           window.addEventListener('pointermove', move); window.addEventListener('pointerup', up, { once: true })
         }} />
-        <ClipPropertiesPanel clip={selected} onUpdate={updateClip} />
+        <ClipPropertiesPanel clip={selected} onUpdate={updateClip} onFrameRateChange={(clipId, fps) => {
+          const isFirstVideo = clips.filter((clip) => clip.type === 'video').sort((a, b) => a.timelineStart - b.timelineStart)[0]?.id === clipId
+          if (!frameRate && isFirstVideo) setProjectFrameRate(fps)
+        }} />
       </section>
 
       <div className="edit-resize-handle edit-resize-vertical" role="separator" aria-label="调整时间线高度" onPointerDown={(event) => {
@@ -134,8 +142,10 @@ export default function EditingStudio() {
         playhead={playhead}
         totalDuration={totalDuration}
         onSelectClip={selectClip}
+        onClearSelection={() => selectClip(null)}
         onSetPlayhead={(time) => { setPlaying(false); setPlayhead(time) }}
         onMoveClip={moveClip}
+        onTrimClip={trimClip}
         tracks={tracks}
         onAddTrack={addTrack}
         onRemoveTrack={removeTrack}
@@ -145,8 +155,15 @@ export default function EditingStudio() {
         onToggleCompact={() => setCompactClips((value) => !value)}
         zoomPercent={zoomPercent}
         onZoomChange={setZoomPercent}
+        frameRate={frameRate || 24}
+        onNudgePlayhead={(direction) => setPlayhead((time) => Math.max(0, Math.min(totalDuration, time + direction / (frameRate || 24))))}
+        onNudgeClip={(id, direction) => {
+      const clip = clips.find((item) => item.id === id)
+      if (clip) moveClip(id, clip.trackId || (clip.type === 'audio' ? 'audio-1' : 'video-1'), Math.max(0, clip.timelineStart + direction / (frameRate || 24)))
+        }}
         style={{ height: timelineHeight }}
       />
+      {exportOpen && <ExportDialog clips={clips} frameRate={frameRate || 24} onClose={() => setExportOpen(false)} />}
     </main>
   )
 }

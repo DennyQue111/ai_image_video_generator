@@ -36,6 +36,7 @@ class SaveEditingProjectRequest(BaseModel):
     name: str
     clips: list = Field(default_factory=list)
     tracks: list = Field(default_factory=list)
+    frame_rate: float | None = None
 
 
 def _editing_path(name: str) -> Path:
@@ -56,7 +57,7 @@ async def list_editing_projects():
 async def save_editing_project(request: SaveEditingProjectRequest):
     name = _safe_name(request.name)
     data = {"name": name, "version": 1, "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "clips": request.clips, "tracks": request.tracks}
+            "clips": request.clips, "tracks": request.tracks, "frame_rate": request.frame_rate}
     _editing_path(name).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     return {"success": True, "name": name, "filename": f"{name}.json", "updated_at": data["saved_at"]}
 

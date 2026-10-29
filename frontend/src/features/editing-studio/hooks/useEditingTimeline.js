@@ -3,19 +3,28 @@ import axios from 'axios'
 
 const PROJECT_KEY = 'ai-image-video-generator:editing-studio:v1'
 const TRACKS_KEY = 'ai-image-video-generator:editing-studio:tracks:v1'
+const FPS_KEY = 'ai-image-video-generator:editing-studio:fps:v1'
 const DEFAULT_TRACKS = [{ id: 'video-1', type: 'video', name: '视频 1' }, { id: 'audio-1', type: 'audio', name: '音频 1' }]
 
-function normalizeClips(clips = []) {
+function normalizeClips(clips = [], tracks = DEFAULT_TRACKS) {
   let cursor = 0
-  return clips.map((clip) => {
+  const normalized = clips.map((clip) => {
     const timelineStart = Number.isFinite(clip.timelineStart) ? clip.timelineStart : cursor
     cursor = Math.max(cursor, timelineStart + Math.max(0, clip.end - clip.start))
-    return { ...clip, timelineStart }
+    const normalized = { ...clip, timelineStart }
+    if (normalized.type === 'audio' && !normalized.linkedClipId && normalized.parentClipId) normalized.linkedClipId = normalized.parentClipId
+    return normalized
   })
+  const audioTrack = tracks.find((track) => track.type === 'audio')
+  const linkedIds = new Set(normalized.map((clip) => clip.linkedClipId))
+  return [...normalized, ...normalized.filter((clip) => clip.type === 'video' && !linkedIds.has(clip.id)).map((clip) => ({
+    ...clip, id: `${clip.id}-audio`, type: 'audio', trackId: audioTrack?.id || 'audio-1', linkedClipId: clip.id,
+    name: `${clip.name} · 音频`, grade: undefined,
+  }))]
 }
 
 function readSavedClips() {
-  try { return normalizeClips(JSON.parse(localStorage.getItem(PROJECT_KEY) || '[]')) } catch { return [] }
+  try { return normalizeClips(JSON.parse(localStorage.getItem(PROJECT_KEY) || '[]'), readSavedTracks()) } catch { return [] }
 }
 
 function readSavedTracks() {
@@ -34,12 +43,16 @@ export function useEditingTimeline() {
   const [playhead, setPlayhead] = useState(0)
   const [playing, setPlaying] = useState(false)
   const [tracks, setTracks] = useState(readSavedTracks)
+  const [frameRate, setFrameRate] = useState(() => {
+    const saved = Number(localStorage.getItem(FPS_KEY))
+    return saved > 0 ? saved : null
+  })
   const [undoCount, setUndoCount] = useState(0)
   const [libraryError, setLibraryError] = useState('')
   const videoRef = useRef(null)
   const undoStack = useRef([])
   const historyState = useRef(null)
-  historyState.current = { clips, tracks, selectedId, playhead }
+  historyState.current = { clips, tracks, selectedId, playhead, frameRate }
 
   const rememberUndo = () => {
     undoStack.current = [...undoStack.current, historyState.current].slice(-10)
@@ -54,12 +67,15 @@ export function useEditingTimeline() {
     setTracks(previous.tracks)
     setSelectedId(previous.selectedId)
     setPlayhead(previous.playhead)
+    setFrameRate(previous.frameRate)
     setPlaying(false)
   }
 
   const loadProject = (project = {}) => {
-    setClips(normalizeClips(project.clips || []))
-    setTracks(Array.isArray(project.tracks) && project.tracks.length ? project.tracks : DEFAULT_TRACKS)
+    const nextTracks = Array.isArray(project.tracks) && project.tracks.length ? project.tracks : DEFAULT_TRACKS
+    setClips(normalizeClips(project.clips || [], nextTracks))
+    setTracks(nextTracks)
+    setFrameRate(Number(project.frame_rate) > 0 ? Number(project.frame_rate) : null)
     setSelectedId(null)
     setPlayhead(0)
     setPlaying(false)
@@ -83,6 +99,17 @@ export function useEditingTimeline() {
   }, [clips])
 
   useEffect(() => { localStorage.setItem(TRACKS_KEY, JSON.stringify(tracks)) }, [tracks])
+  useEffect(() => {
+    if (frameRate) localStorage.setItem(FPS_KEY, String(frameRate))
+    else localStorage.removeItem(FPS_KEY)
+  }, [frameRate])
+
+  const setProjectFrameRate = (value) => {
+    const next = Math.max(1, Math.min(120, Number(value) || 24))
+    rememberUndo()
+    setFrameRate(next)
+    return next
+  }
 
   const loadLibrary = async () => {
     setLibraryError('')
@@ -100,6 +127,9 @@ export function useEditingTimeline() {
     rememberUndo()
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     const isImage = asset.type === 'image'
+    const timelineStart = clips.reduce((end, item) => Math.max(end, item.timelineStart + item.end - item.start), 0)
+    const videoTrackId = tracks.find((track) => track.type === 'video')?.id
+    const audioTrackId = tracks.find((track) => track.type === 'audio')?.id
     const clip = {
       id,
       assetId: asset.id,
@@ -110,12 +140,16 @@ export function useEditingTimeline() {
       end: isImage ? 5 : 10,
       sourceDuration: isImage ? 5 : 10,
       grade: { brightness: 100, contrast: 100, saturation: 100 },
-      trackId: tracks.find((track) => track.type === 'video')?.id,
+      trackId: videoTrackId,
+      timelineStart,
     }
-    setClips((items) => {
-      const timelineStart = items.reduce((end, item) => Math.max(end, item.timelineStart + item.end - item.start), 0)
-      return [...items, { ...clip, timelineStart }]
-    })
+    const linkedAudio = !isImage ? { ...clip, id: `${id}-audio`, type: 'audio', trackId: audioTrackId, linkedClipId: id, name: `${asset.filename} · 音频`, grade: undefined } : null
+    setClips((items) => [...items, clip, ...(linkedAudio ? [linkedAudio] : [])])
+    if (!frameRate && asset.type === 'video' && asset.id) {
+      axios.get('/api/editing-media/frame-rate', { params: { asset_id: asset.id } })
+        .then((response) => { if (Number(response.data.fps) > 0) setFrameRate(Number(response.data.fps)) })
+        .catch(() => {})
+    }
     setSelectedId(id)
   }
 
@@ -123,7 +157,7 @@ export function useEditingTimeline() {
     const imports = Array.from(files || []).filter((file) => file.type.startsWith('video/') || file.type.startsWith('image/'))
     if (!imports.length) return
     try {
-      const newClips = await Promise.all(imports.map(async (file) => {
+      const importedClips = await Promise.all(imports.map(async (file) => {
         const formData = new FormData()
         formData.append('file', file)
         const response = await axios.post('/api/editing-media/upload', formData)
@@ -142,15 +176,24 @@ export function useEditingTimeline() {
         }
       }))
       rememberUndo()
+      const newClips = []
       setClips((items) => {
         let timelineStart = items.reduce((end, item) => Math.max(end, item.timelineStart + item.end - item.start), 0)
-        return [...items, ...newClips.map((clip) => {
+        importedClips.forEach((clip) => {
           const placed = { ...clip, timelineStart }
+          newClips.push(placed)
           timelineStart += clip.end - clip.start
-          return placed
-        })]
+          if (clip.type === 'video') newClips.push({ ...placed, id: `${clip.id}-audio`, type: 'audio', trackId: historyState.current.tracks.find((track) => track.type === 'audio')?.id, linkedClipId: clip.id, name: `${clip.name} · 音频`, grade: undefined })
+        })
+        return [...items, ...newClips]
       })
-      setSelectedId(newClips.at(-1).id)
+      const firstVideo = importedClips.find((clip) => clip.type === 'video')
+      if (!frameRate && firstVideo?.assetId) {
+        axios.get('/api/editing-media/frame-rate', { params: { asset_id: firstVideo.assetId } })
+          .then((response) => { if (Number(response.data.fps) > 0) setFrameRate(Number(response.data.fps)) })
+          .catch(() => {})
+      }
+      setSelectedId(importedClips.at(-1).id)
     } catch (error) {
       alert(`导入素材失败：${error.response?.data?.detail || error.message || String(error)}`)
     }
@@ -158,39 +201,84 @@ export function useEditingTimeline() {
 
   const updateClip = (id, patch, recordUndo = true) => {
     if (recordUndo) rememberUndo()
-    setClips((items) => items.map((clip) => clip.id === id ? { ...clip, ...patch } : clip))
+    setClips((items) => {
+      const target = items.find((clip) => clip.id === id)
+      const linkedId = target?.type === 'audio' ? target.linkedClipId : target?.id
+      return items.map((clip) => {
+        if (clip.id === id) return { ...clip, ...patch }
+        if (linkedId && clip.linkedClipId === linkedId && ('start' in patch || 'end' in patch || 'timelineStart' in patch)) return { ...clip, ...Object.fromEntries(['start', 'end', 'timelineStart'].filter((key) => key in patch).map((key) => [key, patch[key]])) }
+        return clip
+      })
+    })
   }
 
   const selectClip = (id) => setSelectedId(id)
+
+  const trimClip = (id, edge, requestedDelta) => {
+    const clip = clips.find((item) => item.id === id)
+    if (!clip) return
+    const frame = 1 / (frameRate || 24)
+    const delta = Math.round(requestedDelta / frame) * frame
+    const linkedId = clip.type === 'audio' ? clip.linkedClipId : clip.id
+    const pair = clips.filter((item) => item.id === linkedId || item.linkedClipId === linkedId)
+    const minStart = Math.max(0, ...pair.map((item) => item.start - item.timelineStart))
+    const nextStart = edge === 'left' ? Math.max(0, clip.start + Math.max(-clip.timelineStart, -clip.start, -minStart, delta)) : clip.start
+    const appliedDelta = nextStart - clip.start
+    const maxSource = Math.min(...pair.map((item) => Number.isFinite(item.sourceDuration) ? item.sourceDuration : item.end))
+    const nextEnd = edge === 'right' ? Math.max(clip.start + frame, Math.min(maxSource, clip.end + delta)) : clip.end
+    if (edge === 'left' && (Math.abs(appliedDelta) < frame / 2 || nextStart >= clip.end - frame)) return
+    if (edge === 'right' && Math.abs(nextEnd - clip.end) < frame / 2) return
+    rememberUndo()
+    setClips((items) => items.map((item) => {
+      if (item.id !== linkedId && item.linkedClipId !== linkedId) return item
+      return edge === 'left'
+        ? { ...item, start: item.start + appliedDelta, timelineStart: item.timelineStart + appliedDelta }
+        : { ...item, end: nextEnd }
+    }))
+  }
 
   const removeSelected = () => {
     if (!selected) return
     rememberUndo()
     const index = clips.findIndex((clip) => clip.id === selected.id)
-    setClips((items) => items.filter((clip) => clip.id !== selected.id))
-    setSelectedId(clips[index + 1]?.id || clips[index - 1]?.id || null)
+    const linkedId = selected.type === 'audio' ? selected.linkedClipId : selected.id
+    const removeIds = selected.type === 'audio' ? new Set([selected.id, linkedId]) : new Set([selected.id, ...clips.filter((clip) => clip.linkedClipId === linkedId).map((clip) => clip.id)])
+    setClips((items) => items.filter((clip) => !removeIds.has(clip.id)))
+    const remaining = clips.filter((clip) => !removeIds.has(clip.id))
+    setSelectedId(remaining[Math.min(index, remaining.length - 1)]?.id || null)
   }
 
   const splitSelected = () => {
-    if (!selected || selected.type !== 'video') return
-    const index = clips.findIndex((clip) => clip.id === selected.id)
-    const offset = playhead - selected.timelineStart
-    const cutAt = selected.start + offset
-    if (cutAt <= selected.start + 0.15 || cutAt >= selected.end - 0.15) return
+    const videoSelected = selected?.type === 'audio' ? clips.find((clip) => clip.id === selected.linkedClipId) : selected
+    if (!videoSelected || videoSelected.type !== 'video') return
+    const source = videoSelected
+    const index = clips.findIndex((clip) => clip.id === source.id)
+    const offset = playhead - source.timelineStart
+    const cutAt = source.start + offset
+    if (cutAt <= source.start + 0.15 || cutAt >= source.end - 0.15) return
     rememberUndo()
-    const left = { ...selected, id: `${selected.id}-a-${Date.now()}`, end: cutAt, name: `${selected.name} · A` }
-    const right = { ...selected, id: `${selected.id}-b-${Date.now()}`, start: cutAt, timelineStart: playhead, name: `${selected.name} · B` }
-    setClips((items) => [...items.slice(0, index), left, right, ...items.slice(index + 1)])
+    const audio = clips.find((clip) => clip.linkedClipId === source.id)
+    const leftId = `${source.id}-a-${Date.now()}`, rightId = `${source.id}-b-${Date.now()}`
+    const left = { ...source, id: leftId, end: cutAt, name: `${source.name} · A` }
+    const right = { ...source, id: rightId, start: cutAt, timelineStart: playhead, name: `${source.name} · B` }
+    const leftAudio = audio ? { ...audio, id: `${leftId}-audio`, linkedClipId: leftId, end: cutAt, name: `${audio.name} · A` } : null
+    const rightAudio = audio ? { ...audio, id: `${rightId}-audio`, linkedClipId: rightId, start: cutAt, timelineStart: playhead, name: `${audio.name} · B` } : null
+    const related = [left, ...(leftAudio ? [leftAudio] : []), right, ...(rightAudio ? [rightAudio] : [])]
+    setClips((items) => [...items.filter((clip) => clip.id !== source.id && clip.linkedClipId !== source.id), ...related])
     setSelectedId(right.id)
   }
 
   const moveClip = (sourceId, trackId, requestedStart) => {
     rememberUndo()
     setClips((items) => {
-      const moving = items.find((clip) => clip.id === sourceId)
+      const selectedMoving = items.find((clip) => clip.id === sourceId)
+      const moving = selectedMoving?.type === 'audio' ? items.find((clip) => clip.id === selectedMoving.linkedClipId) || selectedMoving : selectedMoving
       if (!moving) return items
       const duration = moving.end - moving.start
-      const others = items.filter((clip) => clip.id !== sourceId && (clip.trackId || 'video-1') === trackId)
+      const movingIds = new Set([moving.id, ...items.filter((clip) => clip.linkedClipId === moving.id).map((clip) => clip.id)])
+      const otherTrackId = selectedMoving?.trackId || (selectedMoving?.type === 'audio' ? 'audio-1' : 'video-1')
+      const actualTrackId = trackId
+      const others = items.filter((clip) => !movingIds.has(clip.id) && (clip.trackId || (clip.type === 'audio' ? 'audio-1' : 'video-1')) === otherTrackId)
       let desiredStart = Math.max(0, Number(requestedStart) || 0)
       const collision = others.find((clip) => desiredStart < clip.timelineStart + clip.end - clip.start && desiredStart + duration > clip.timelineStart)
       if (collision) {
@@ -207,7 +295,10 @@ export function useEditingTimeline() {
       candidates.sort((a, b) => Math.abs(a - desiredStart) - Math.abs(b - desiredStart))
       const start = candidates.find((candidate) => others.every((clip) => candidate + duration <= clip.timelineStart + 0.01 || candidate >= clip.timelineStart + clip.end - clip.start - 0.01))
         ?? Math.max(0, ...others.map((clip) => clip.timelineStart + clip.end - clip.start))
-      return items.map((clip) => clip.id === sourceId ? { ...clip, trackId, timelineStart: start } : clip)
+      return items.map((clip) => {
+        if (clip.id === sourceId) return { ...clip, timelineStart: start, trackId: actualTrackId }
+        return movingIds.has(clip.id) ? { ...clip, timelineStart: start } : clip
+      })
     })
   }
 
@@ -230,9 +321,7 @@ export function useEditingTimeline() {
     const remainingTracks = tracks.filter((item) => item.id !== trackId)
     const replacement = remainingTracks.find((item) => item.type === track.type)
     setTracks(remainingTracks)
-    if (track.type === 'video') {
-      setClips((items) => items.map((clip) => (clip.trackId || 'video-1') === trackId ? { ...clip, trackId: replacement.id } : clip))
-    }
+    setClips((items) => items.map((clip) => (clip.trackId || (clip.type === 'audio' ? 'audio-1' : 'video-1')) === trackId ? { ...clip, trackId: replacement.id } : clip))
   }
 
   const handleMetadata = (event) => {
@@ -281,9 +370,9 @@ export function useEditingTimeline() {
   }, [playing, totalDuration])
 
   return {
-    library, clips, setClips, tracks, addTrack, removeTrack, selected, selectedId, playhead, setPlayhead, playing, setPlaying,
+    library, clips, setClips, tracks, addTrack, removeTrack, selected, selectedId, playhead, setPlayhead, playing, setPlaying, frameRate, setProjectFrameRate,
     libraryError, videoRef, activeInfo, totalDuration, loadLibrary, addAsset,
-    addLocalFiles, updateClip, selectClip, removeSelected, splitSelected, moveClip, undo, canUndo: undoCount > 0, loadProject,
+    addLocalFiles, updateClip, selectClip, removeSelected, splitSelected, moveClip, trimClip, undo, canUndo: undoCount > 0, loadProject,
     handleMetadata, onVideoTime, onVideoEnded,
   }
 }

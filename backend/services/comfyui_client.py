@@ -4074,6 +4074,7 @@ class ComfyUIClient:
         prompt: str,
         reference_image_urls: List[str],
         first_frame_image_url: str = "",
+        last_frame_image_url: str = "",
         width: int = 1344,
         height: int = 768,
         duration_seconds: float = 8,
@@ -4081,7 +4082,7 @@ class ComfyUIClient:
         seed: int = -1,
         save_prefix: str = "video/MiniMax_H3",
         timeout: int = 7200,  # 2小时（12GB 显存动态加载 + 推理需要 60+ 分钟）
-        workflow_type: str = "pruned",  # "pruned" 截肢版 | "int8" 完整 int8 版
+        workflow_type: str = "int8",  # 默认完整 int8 版；显式传 pruned 才使用截肢版
     ) -> Dict[str, Any]:
         """
         使用 MiniMax H3 工作流生成视频。首帧与多参考图并用时，将首帧作为 Picture 参考并通过官方 Add Guide 锚定 frame 0。
@@ -4090,6 +4091,7 @@ class ComfyUIClient:
             prompt: 视频 prompt（英文）
             reference_image_urls: 外观/人物等参考图片 URL 列表（0-9 张；与首帧并用最多 8 张）
             first_frame_image_url: 可选首帧图片 URL；与参考图片并用时走 Ref2VA + MiniMaxH3AddGuide
+            last_frame_image_url: 可选尾帧图片 URL；首尾锁定时连接 MiniMax H3 原生输入，不与参考图片混用
             width: 视频宽度
             height: 视频高度
             duration_seconds: 视频时长（秒）
@@ -4098,32 +4100,51 @@ class ComfyUIClient:
             save_prefix: 保存文件名前缀
             timeout: 超时时间（秒）
         """
-        if not reference_image_urls and not first_frame_image_url:
-            raise ValueError("至少需要首帧图片或 1 张参考图片")
+        if not reference_image_urls and not first_frame_image_url and not last_frame_image_url:
+            raise ValueError("至少需要首帧图片、尾帧图片或 1 张参考图片")
+        if last_frame_image_url and reference_image_urls:
+            raise ValueError("MiniMax H3 首尾帧锁定与多参考图必须分开使用")
         max_reference_images = 8 if first_frame_image_url and reference_image_urls else 9
         if len(reference_image_urls) > max_reference_images:
             raise ValueError(
                 f"MiniMax H3 最多支持 9 张 Picture 参考；首帧与人物参考并用时，人物参考最多 {max_reference_images} 张"
             )
 
-        use_ref2va_first_frame_guide = bool(first_frame_image_url and reference_image_urls)
-        task_type = "Ref2VA" if use_ref2va_first_frame_guide else (
-            "I2VA" if first_frame_image_url else "Ref2VA"
+        # Default to the proven Ref2VA + AddGuide path for first-frame + refs.
+        # Native first/last locking is a separate FL2VA path with no references.
+        use_ref2va_first_frame_guide = bool(
+            first_frame_image_url and reference_image_urls and not last_frame_image_url
         )
-        logger.info("[ComfyUI] MiniMax H3 generate, task=%s, refs=%d, has_first_frame=%s, %dx%d, duration=%ss, fps=%d",
-                    task_type, len(reference_image_urls), bool(first_frame_image_url),
+        if use_ref2va_first_frame_guide:
+            task_type = "Ref2VA"
+        elif first_frame_image_url and last_frame_image_url:
+            task_type = "FL2VA"
+        elif first_frame_image_url:
+            task_type = "I2VA"
+        elif last_frame_image_url:
+            task_type = "L2VA"
+        else:
+            task_type = "Ref2VA"
+        logger.info("[ComfyUI] MiniMax H3 generate, task=%s, refs=%d, has_first_frame=%s, has_last_frame=%s, %dx%d, duration=%ss, fps=%d",
+                    task_type, len(reference_image_urls), bool(first_frame_image_url), bool(last_frame_image_url),
                     width, height, duration_seconds, fps)
 
         # 1. 上传图片。首帧+人物参考时，首帧也进入 Picture 参考序列，确保提示词标签有对应媒体；
         #    同一文件再由官方 MiniMaxH3AddGuide 锚定到 frame 0。
         uploaded_filenames = []
         first_frame_filename = ""
+        last_frame_filename = ""
         if first_frame_image_url:
             result = await self.upload_image(first_frame_image_url)
             first_frame_filename = result["name"]
             if use_ref2va_first_frame_guide:
                 uploaded_filenames.append(first_frame_filename)
             logger.info("[ComfyUI] MiniMax H3 uploaded first frame: %s", first_frame_filename)
+
+        if last_frame_image_url:
+            result = await self.upload_image(last_frame_image_url)
+            last_frame_filename = result["name"]
+            logger.info("[ComfyUI] MiniMax H3 uploaded last frame: %s", last_frame_filename)
 
         for i, url in enumerate(reference_image_urls):
             logger.info("[ComfyUI] MiniMax H3 uploading ref image %d/%d", i + 1, len(reference_image_urls))
@@ -4197,6 +4218,15 @@ class ComfyUIClient:
                 }
                 api_workflow["363"]["inputs"]["first_frame"] = [self._MINIMAX_FIRST_FRAME_NODE_ID, 0]
                 logger.info("[ComfyUI] MiniMax H3 connected I2VA first frame to node 363")
+
+            if last_frame_filename:
+                last_frame_node_id = "398"
+                api_workflow[last_frame_node_id] = {
+                    "class_type": "LoadImage",
+                    "inputs": {"image": last_frame_filename},
+                }
+                api_workflow["363"]["inputs"]["last_frame"] = [last_frame_node_id, 0]
+                logger.info("[ComfyUI] MiniMax H3 connected last frame to native I2VA last_frame input")
 
         # Node 360: VHS_VideoCombine — 帧率和保存前缀
         if "360" in api_workflow:

@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
-import { ChevronDown, FolderOpen, Loader2, Save, Trash2 } from 'lucide-react'
+import { ChevronDown, FolderOpen, Loader2, Save, Settings2, Trash2 } from 'lucide-react'
 import axios from 'axios'
 
 function formatErr(error) { return error?.response?.data?.detail || error?.message || String(error) }
 
-export default function EditingProjectBar({ currentName, onNameChange, onSave, onLoad, onDelete }) {
+export default function EditingProjectBar({ currentName, onNameChange, onSave, onLoad, onDelete, frameRate, onFrameRateChange }) {
   const [projects, setProjects] = useState([])
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [nameInput, setNameInput] = useState(currentName || '')
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const dropdownRef = useRef(null)
 
   const refresh = async () => {
@@ -60,6 +61,16 @@ export default function EditingProjectBar({ currentName, onNameChange, onSave, o
     </div>
     <input className="editing-project-name" value={nameInput} onChange={(event) => setNameInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') save() }} placeholder="剪辑台项目名称" aria-label="剪辑台项目名称" disabled={busy} />
     <button className="edit-tool-button" onClick={save} disabled={busy} title="保存项目"><Save size={15} />保存</button>
+    <div className="editing-project-dropdown">
+      <button className={`edit-tool-button ${settingsOpen ? 'active' : ''}`} onClick={() => setSettingsOpen((value) => !value)} title="项目配置" aria-label="项目配置"><Settings2 size={15} />配置</button>
+      {settingsOpen && <div className="editing-settings-menu">
+        <label htmlFor="editing-project-fps">时间线帧速率</label>
+        <select id="editing-project-fps" value={frameRate || 24} onChange={(event) => onFrameRateChange(Number(event.target.value))}>
+          {[23.976, 24, 25, 29.97, 30, 50, 59.94, 60].map((fps) => <option key={fps} value={fps}>{fps} fps</option>)}
+        </select>
+        <small>{frameRate ? '帧率由项目首个视频素材确定，可在此调整。' : '添加首个视频素材后将自动采用其帧率。'}</small>
+      </div>}
+    </div>
     <button className="editing-project-delete" onClick={remove} disabled={busy || !currentName} title="删除项目" aria-label="删除项目"><Trash2 size={16} /></button>
   </div>
 }

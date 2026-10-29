@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import axios from 'axios'
 import { formatTime } from '../utils/format'
 
-export default function ClipPropertiesPanel({ clip, onUpdate }) {
+export default function ClipPropertiesPanel({ clip, onUpdate, onFrameRateChange }) {
   const [activeTab, setActiveTab] = useState('clip')
   const [frameRate, setFrameRate] = useState(null)
   const [frameRateState, setFrameRateState] = useState('idle')
@@ -22,10 +22,11 @@ export default function ClipPropertiesPanel({ clip, onUpdate }) {
         if (cancelled) return
         setFrameRate(response.data.fps)
         setFrameRateState(response.data.fps ? 'ready' : 'unavailable')
+        if (response.data.fps) onFrameRateChange?.(clip.id, response.data.fps)
       })
       .catch(() => { if (!cancelled) setFrameRateState('unavailable') })
     return () => { cancelled = true }
-  }, [clip?.id, clip?.type, clip?.assetId])
+  }, [clip?.id, clip?.type, clip?.assetId, onFrameRateChange])
 
   const frameRateLabel = frameRateState === 'loading'
     ? '读取中…'
