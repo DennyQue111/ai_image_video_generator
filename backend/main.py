@@ -19,8 +19,12 @@ from starlette.responses import FileResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from constants import PROJECT_FILE_PATH, resolve_cache_path
+from routes.editing_studio import router as editing_studio_router
 from routes.generation import router as generation_router
+from routes.image_tools import router as image_tools_router
+from routes.media import router as media_router
 from routes.projects import router as projects_router
+from routes.prompt_tools import router as prompt_tools_router
 from routes.shot_breakdown import router as shot_breakdown_router
 
 app = FastAPI(title="AI 图片视频生成器", version="1.0.0")
@@ -57,6 +61,10 @@ async def root():
 
 
 app.include_router(generation_router)
+app.include_router(image_tools_router)
+app.include_router(prompt_tools_router)
+app.include_router(editing_studio_router)
+app.include_router(media_router)
 app.include_router(projects_router)
 app.include_router(shot_breakdown_router)
 

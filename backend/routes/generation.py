@@ -4,27 +4,19 @@
 """
 
 import logging
-import json
-import os
 import uuid
 import shutil
-import subprocess
-import sys
 import requests
-from fractions import Fraction
 from pathlib import Path
 from typing import List
-from fastapi import APIRouter, HTTPException, UploadFile, File, BackgroundTasks
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from constants import PROJECT_FILE_PATH, resolve_cache_path
 from services.comfyui_client import get_comfyui_client
-from services.face_detection import locate_chin_y
 from services.google_ai_client import GoogleAIClient
-from services.llm_vision_service import LLMVisionService
 from services.style_config import StyleConfig
-from routes.shot_breakdown import get_project_shot
+from services.generation_assets import _resolve_image_data, _save_comfyui_image, _to_full_url
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -32,157 +24,6 @@ style_config = StyleConfig()
 
 OUTPUT_DIR = Path(PROJECT_FILE_PATH) / "generation" / "exports"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-EDITING_EXPORT_DIR = Path(PROJECT_FILE_PATH) / "editPanel" / "exports"
-EDITING_EXPORT_DIR.mkdir(parents=True, exist_ok=True)
-EDITING_VIDEO_EXPORT_DIR = EDITING_EXPORT_DIR / "video"
-EDITING_AUDIO_EXPORT_DIR = EDITING_EXPORT_DIR / "audio"
-EDITING_VIDEO_EXPORT_DIR.mkdir(parents=True, exist_ok=True)
-EDITING_AUDIO_EXPORT_DIR.mkdir(parents=True, exist_ok=True)
-_EDITING_EXPORTS = {}
-
-
-class EditingExportRequest(BaseModel):
-    clips: list = Field(default_factory=list)
-    video_clips: list = Field(default_factory=list)
-    audio_clips: list = Field(default_factory=list)
-    mode: str = "video"
-    filename: str = "剪辑台导出"
-    format: str = "mp4"
-    resolution: str = "source"
-    quality: str = "high"
-    frame_rate: float = 24
-
-
-def _run_editing_export(export_id: str, request_data: dict):
-    state = _EDITING_EXPORTS[export_id]
-    work_dir = EDITING_EXPORT_DIR / export_id
-    work_dir.mkdir(parents=True, exist_ok=True)
-    ffmpeg = shutil.which("ffmpeg")
-    if not ffmpeg:
-        state.update(status="error", error="未找到 FFmpeg，无法导出视频")
-        return
-    try:
-        mode = request_data.get("mode")
-        preferred = request_data.get("video_clips") if mode == "video" else request_data.get("audio_clips")
-        raw_clips = preferred if preferred is not None else request_data.get("clips", [])
-        clips = sorted(raw_clips, key=lambda item: float(item.get("timelineStart", 0)))
-        if not clips:
-            raise ValueError("时间线上没有可导出的片段")
-        fps = max(1, min(120, float(request_data.get("frame_rate") or 24)))
-        inputs, filters, video_segments, audio_segments = [], [], [], []
-        cursor = 0.0
-        width, height = 1920, 1080
-        resolution = request_data.get("resolution", "source")
-        if resolution in {"1080p", "720p", "480p"}:
-            height = int(resolution[:-1])
-            width = round(height * 16 / 9)
-        quality = request_data.get("quality", "high")
-        crf = {"high": 18, "medium": 23, "low": 28}.get(quality, 18)
-        video_mode = request_data.get("mode") == "video"
-        include_audio = video_mode and request_data.get("audio", True)
-        if resolution == "source" and mode == "video":
-            for clip in clips:
-                if clip.get("type") not in {"video", "image"}: continue
-                candidate = resolve_cache_path(str(clip.get("assetId") or ""))
-                probe = shutil.which("ffprobe")
-                if not probe or not candidate.is_file(): continue
-                probe_result = subprocess.run([probe, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "json", str(candidate)], capture_output=True, text=True, timeout=15)
-                streams = json.loads(probe_result.stdout).get("streams", []) if probe_result.returncode == 0 else []
-                if streams:
-                    width = min(1920, max(2, int(streams[0].get("width", width))))
-                    height = min(1080, max(2, int(streams[0].get("height", height))))
-                    width -= width % 2; height -= height % 2
-                    break
-        for index, clip in enumerate(clips):
-            duration = max(0.04, float(clip.get("end", 0)) - float(clip.get("start", 0)))
-            start = max(cursor, float(clip.get("timelineStart", cursor)))
-            if start > cursor:
-                gap_index = sum(1 for token in inputs if token == "-i")
-                inputs.extend(["-f", "lavfi", "-t", str(start - cursor), "-i", f"color=c=black:s={width}x{height}:r={fps}"])
-                if video_mode:
-                    filters.append(f"[{gap_index}:v]setsar=1,fps={fps},format=yuv420p,setpts=PTS-STARTPTS[v{gap_index}]")
-                    video_segments.append(f"[v{gap_index}]")
-                if include_audio:
-                    filters.append(f"anullsrc=r=48000:cl=stereo:d={start - cursor},asetpts=PTS-STARTPTS[a{gap_index}]")
-                    audio_segments.append(f"[a{gap_index}]")
-                cursor = start
-            asset_id = str(clip.get("assetId") or "")
-            source = resolve_cache_path(asset_id)
-            try:
-                source.relative_to(Path(PROJECT_FILE_PATH).resolve())
-            except ValueError as exc:
-                raise ValueError("片段素材路径无效") from exc
-            if not source.is_file():
-                raise ValueError(f"找不到素材：{clip.get('name', asset_id)}")
-            input_index = sum(1 for token in inputs if token == "-i")
-            if clip.get("type") == "image":
-                inputs.extend(["-loop", "1", "-t", str(duration), "-i", str(source)])
-            else:
-                inputs.extend(["-i", str(source)])
-            if video_mode and clip.get("type") == "image":
-                filters.append(f"[{input_index}:v]scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps},format=yuv420p,setpts=PTS-STARTPTS[v{index}]")
-                video_segments.append(f"[v{index}]")
-            elif video_mode:
-                source_start = float(clip.get("start", 0))
-                filters.append(f"[{input_index}:v]trim=start={source_start}:duration={duration},scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps},format=yuv420p,setpts=PTS-STARTPTS[v{index}]")
-                video_segments.append(f"[v{index}]")
-            if mode == "audio" and clip.get("type") == "audio":
-                source_start = float(clip.get("start", 0))
-                filters.append(f"[{input_index}:a]atrim=start={source_start}:duration={duration},asetpts=PTS-STARTPTS[a{index}]")
-                audio_segments.append(f"[a{index}]")
-            elif include_audio and clip.get("type") == "video":
-                probe = shutil.which("ffprobe")
-                has_audio = False
-                if probe:
-                    probe_result = subprocess.run([probe, "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=index", "-of", "csv=p=0", str(source)], capture_output=True, text=True, timeout=15)
-                    has_audio = probe_result.returncode == 0 and bool(probe_result.stdout.strip())
-                if has_audio:
-                    filters.append(f"[{input_index}:a]atrim=start={float(clip.get('start', 0))}:duration={duration},asetpts=PTS-STARTPTS[a{index}]")
-                else:
-                    filters.append(f"anullsrc=r=48000:cl=stereo:d={duration},asetpts=PTS-STARTPTS[a{index}]")
-                audio_segments.append(f"[a{index}]")
-            elif include_audio:
-                filters.append(f"anullsrc=r=48000:cl=stereo:d={duration},asetpts=PTS-STARTPTS[a{index}]")
-                audio_segments.append(f"[a{index}]")
-            cursor = start + duration
-        ext = request_data.get("format", "mp4")
-        export_dir = EDITING_AUDIO_EXPORT_DIR if mode == "audio" else EDITING_VIDEO_EXPORT_DIR
-        output = export_dir / f"{export_id}.{ext}"
-        if mode == "audio":
-            if not audio_segments:
-                raise ValueError("时间线中的视频没有可用音轨，无法导出音频")
-            filters.append(f"{''.join(audio_segments)}concat=n={len(audio_segments)}:v=0:a=1[outa]")
-            maps = ["-map", "[outa]"]
-        else:
-            filters.append(f"{''.join(video_segments)}concat=n={len(video_segments)}:v=1:a=0[outv]")
-            maps = ["-map", "[outv]"]
-            if request_data.get("audio", True):
-                if audio_segments:
-                    filters.append(f"{''.join(audio_segments)}concat=n={len(audio_segments)}:v=0:a=1[outa]")
-                    maps.extend(["-map", "[outa]"])
-        command = [ffmpeg, "-y", *inputs, "-filter_complex", ";".join(filters), *maps]
-        if mode == "audio":
-            codecs = {"mp3": ["-c:a", "libmp3lame", "-q:a", "2"], "wav": ["-c:a", "pcm_s16le"], "aac": ["-c:a", "aac", "-b:a", "192k"], "m4a": ["-c:a", "aac", "-b:a", "192k"]}
-            command.extend(codecs.get(ext, codecs["mp3"]))
-        else:
-            command.extend(["-c:v", "libx264", "-crf", str(crf), "-preset", "medium", "-r", str(fps)])
-            if request_data.get("audio", True):
-                command.extend(["-c:a", "aac", "-b:a", "192k"])
-            if ext == "webm": command.extend(["-c:v", "libvpx-vp9", "-crf", str(crf), "-b:v", "0", "-c:a", "libopus"])
-            if ext == "mov": command.extend(["-movflags", "+faststart"])
-        command.append(str(output))
-        state.update(status="processing", progress=5)
-        process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
-        _, stderr = process.communicate()
-        if process.returncode != 0:
-            raise RuntimeError(stderr[-1800:] or "FFmpeg 导出失败")
-        state.update(status="completed", progress=100, filename=output.name, path=str(output))
-    except Exception as exc:
-        logger.exception("Editing export failed")
-        state.update(status="error", error=str(exc))
-    finally:
-        shutil.rmtree(work_dir, ignore_errors=True)
-
 
 # ============ 请求模型 ============
 
@@ -197,11 +38,9 @@ class TextToImageRequest(BaseModel):
     cfg: float = 1.0
     seed: int = -1
 
-
 class ImageInput(BaseModel):
     url: str
     description: str = ""
-
 
 class ImageToImageRequest(BaseModel):
     prompt: str
@@ -212,7 +51,6 @@ class ImageToImageRequest(BaseModel):
     width: int = 1024
     height: int = 1024
 
-
 class CameraAngleRequest(BaseModel):
     image_url: str = Field(..., description="输入场景或主体图片 URL")
     yaw: float = Field(0, ge=-360, le=360, description="水平旋转角度")
@@ -220,7 +58,6 @@ class CameraAngleRequest(BaseModel):
     distance: float = Field(1.0, ge=0.3, le=3.0, description="相机距离系数")
     width: int = Field(1024, ge=512, le=2048)
     height: int = Field(1024, ge=512, le=2048)
-
 
 class ImageToVideoRequest(BaseModel):
     prompt: str = Field(..., description="视频画面描述（英文）")
@@ -236,74 +73,12 @@ class ImageToVideoRequest(BaseModel):
     height: int = 0
     workflow_type: str = "int8"  # MiniMax H3 默认完整 int8 版；显式传 pruned 才使用截肢版
 
-
-class InpaintRequest(BaseModel):
-    prompt: str
-    model: str = "gemini-2.5-flash-image"
-    base_image: str = Field(..., description="原图 URL 或 data URL")
-    mask_image: str = Field(..., description="遮罩图 data URL（白色=需修复区域）")
-    aspect_ratio: str = "1:1"
-
-
-class ComfyInpaintRequest(BaseModel):
-    prompt: str = Field(..., min_length=1)
-    base_image: str = Field(..., description="原图 URL")
-    mask_image: str = Field(..., description="黑底白色蒙版 data URL；白色区域会被重绘")
-    model: str = "comfyui-flux2-inpaint"
-    width: int = Field(1024, ge=256, le=2048)
-    height: int = Field(1024, ge=256, le=2048)
-    grow_mask_by: int = Field(8, ge=0, le=64)
-
-
-class ImageToPromptRequest(BaseModel):
-    image: str = Field(..., description="图片 URL 或 data URL")
-    model: str = "gemini-2.5-flash"
-
-
-class SceneHDRRequest(BaseModel):
-    image: str = Field(..., description="场景图 URL")
-    negative_prompt: str = "people, person, human, character"
-    custom_instruction: str = ""
-    model: str = "qwen-image-edit"  # qwen-image-edit | flux2-klein | flux3-klein
-
-
-class VideoPromptRequest(BaseModel):
-    image: str = Field(..., description="参考图片 URL（/static/projects/... 形式）")
-    instruction: str = Field("", description="用户对视频的基本要求")
-
-
-class ShotVideoPromptRequest(BaseModel):
-    project_id: str = Field(..., min_length=1)
-    shot_id: str = Field(..., min_length=1)
-    reference_images: list[str] = Field(default_factory=list, description="图片1人物概念图，图片2镜头参考帧")
-
-
-class ModelViewPromptRequest(BaseModel):
-    image: str = Field(..., description="参考图片 URL")
-    instruction: str = Field("", description="用户对模型三视图的要求")
-
-
-class ConceptHeadCropRequest(BaseModel):
-    image: str = Field(..., description="单角色正面全身图 URL")
-
-
 class YoloSplitRequest(BaseModel):
     image: str = Field(..., description="待拆分图片 URL")
     classes: List[str] = Field(default_factory=lambda: ["person"], description="要提取的目标类别")
     confidence: float = Field(0.25, ge=0.05, le=0.95)
 
-
 # ============ 辅助函数 ============
-
-def _to_full_url(url: str) -> str:
-    """将 /static/projects/... 相对路径转为后端可访问的完整 URL"""
-    if url and url.startswith("/static/"):
-        backend_port = os.getenv("DENNY_BACKEND_PORT", "8005")
-        full = f"http://localhost:{backend_port}{url}"
-        logger.info("[API] Resolved relative URL: %s -> %s", url, full)
-        return full
-    return url
-
 
 def _compute_aspect_ratio(width: int, height: int) -> str:
     """根据宽高计算最接近的标准 aspect ratio 字符串"""
@@ -321,7 +96,6 @@ def _compute_aspect_ratio(width: int, height: int) -> str:
     }
     return standard.get((w, h), f"{w}:{h}")
 
-
 def _apply_style(prompt: str, style: str) -> str:
     """在 prompt 前追加风格提示词"""
     style_prompt = style_config.get_style_prompt(style)
@@ -330,10 +104,8 @@ def _apply_style(prompt: str, style: str) -> str:
     logger.debug("[API] No style prompt found for style=%s", style)
     return prompt
 
-
 def _nearest(value: float, choices: list[float]) -> float:
     return min(choices, key=lambda option: abs(value - option))
-
 
 def _build_multiangle_prompt(yaw: float, pitch: float, distance: float) -> tuple[str, dict]:
     """将自由相机参数映射为 Multiple-Angles LoRA 训练过的 96 个标准机位。"""
@@ -361,59 +133,6 @@ def _build_multiangle_prompt(yaw: float, pitch: float, distance: float) -> tuple
         "label": f"{azimuths[snapped_yaw]} · {elevations[snapped_pitch]} · {distances[snapped_distance]}",
     }
 
-
-def _resolve_image_data(url: str):
-    """解析图片 URL，返回 (data, mime_type, ext)"""
-    raw_url = url.split("?")[0]
-    logger.info("[API] Resolving image data from %s", raw_url)
-    if "/static/projects/" in raw_url:
-        relative = raw_url.split("/static/projects/", 1)[1]
-        local_path = resolve_cache_path(relative)
-        if not local_path.exists():
-            logger.error("[API] Local image not found: %s", local_path)
-            raise FileNotFoundError(f"图片文件不存在: {local_path}")
-        data = local_path.read_bytes()
-        logger.info("[API] Loaded local image, size=%d bytes", len(data))
-    else:
-        resp = requests.get(raw_url, timeout=60)
-        resp.raise_for_status()
-        data = resp.content
-        logger.info("[API] Downloaded remote image, size=%d bytes", len(data))
-
-    ext = raw_url.rsplit(".", 1)[-1].lower()
-    ext = "jpeg" if ext in ("jpg", "jpeg") else ext if ext in ("png", "webp") else "png"
-    mime = f"image/{'jpeg' if ext == 'jpg' else ext}"
-    return data, mime, ext
-
-
-def _save_comfyui_image(comfyui_url: str, task_folder: Path, prefix: str = "output") -> dict:
-    """从 ComfyUI HTTP URL 下载图片并保存到本地"""
-    logger.info("[API] Saving ComfyUI image from %s", comfyui_url)
-    resp = requests.get(comfyui_url, timeout=60)
-    resp.raise_for_status()
-    data = resp.content
-
-    ext = "png"
-    mime = resp.headers.get("content-type", "image/png")
-    if "jpeg" in mime or "jpg" in mime:
-        ext = "jpg"
-    elif "webp" in mime:
-        ext = "webp"
-
-    filename = f"{prefix}_{uuid.uuid4().hex[:8]}.{ext}"
-    task_folder.mkdir(parents=True, exist_ok=True)
-    save_path = task_folder / filename
-    save_path.write_bytes(data)
-
-    logger.info("[API] ComfyUI image saved to %s, size=%d bytes", save_path, len(data))
-    relative_path = save_path.relative_to(PROJECT_FILE_PATH)
-    return {
-        "filename": filename,
-        "local_path": str(save_path),
-        "url": f"/static/projects/{relative_path.as_posix()}",
-    }
-
-
 # ============ 接口 ============
 
 @router.get("/api/status")
@@ -437,198 +156,10 @@ async def api_status():
         "gemini_available": gemini_available,
     }
 
-
 @router.get("/api/styles")
 async def api_styles():
     """获取所有可用风格列表"""
     return {"success": True, "styles": style_config.get_all_styles()}
-
-
-@router.post("/api/upload-image")
-async def upload_image(file: UploadFile = File(...)):
-    """上传图片到临时目录，返回可访问的 URL"""
-    logger.info("[API] /api/upload-image called, filename=%s", file.filename)
-    try:
-        upload_dir = Path(PROJECT_FILE_PATH) / "generation" / "uploads" / "image"
-        upload_dir.mkdir(parents=True, exist_ok=True)
-
-        ext = (file.filename or "png").rsplit(".", 1)[-1].lower()
-        ext = ext if ext in ("png", "jpg", "jpeg", "webp") else "png"
-        filename = f"upload_{uuid.uuid4().hex[:8]}.{ext}"
-        save_path = upload_dir / filename
-
-        with save_path.open("wb") as f:
-            shutil.copyfileobj(file.file, f)
-
-        relative_path = save_path.relative_to(PROJECT_FILE_PATH)
-        url = f"/static/projects/{relative_path.as_posix()}"
-        logger.info("[API] Image uploaded to %s", save_path)
-        return {
-            "success": True,
-            "filename": filename,
-            "url": url,
-        }
-    except Exception as e:
-        logger.error("[API] Upload failed: %s", e)
-        raise HTTPException(status_code=500, detail=f"上传失败: {str(e)}")
-
-
-@router.post("/api/editing-media/upload")
-async def upload_editing_media(file: UploadFile = File(...)):
-    """Store a user-imported image or video for persistent editing projects."""
-    ext = Path(file.filename or "").suffix.lower()
-    supported = {".png", ".jpg", ".jpeg", ".webp", ".mp4", ".webm", ".mov", ".mkv"}
-    if ext not in supported:
-        raise HTTPException(status_code=400, detail="仅支持 PNG、JPG、WEBP、MP4、WEBM、MOV 或 MKV 文件")
-    media_kind = "video" if ext in {".mp4", ".webm", ".mov", ".mkv"} else "image"
-    upload_dir = Path(PROJECT_FILE_PATH) / "editPanel" / "uploads" / media_kind
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    filename = f"editing_{uuid.uuid4().hex[:12]}{ext}"
-    save_path = upload_dir / filename
-    try:
-        with save_path.open("wb") as target:
-            shutil.copyfileobj(file.file, target)
-        relative_path = save_path.relative_to(PROJECT_FILE_PATH)
-        return {"success": True, "filename": file.filename or filename,
-                "url": f"/static/projects/{relative_path.as_posix()}",
-                "asset_id": relative_path.as_posix(),
-                "type": "video" if ext in {".mp4", ".webm", ".mov", ".mkv"} else "image"}
-    except Exception as exc:
-        save_path.unlink(missing_ok=True)
-        logger.exception("[API] Editing media upload failed")
-        raise HTTPException(status_code=500, detail=f"素材上传失败: {exc}") from exc
-
-
-@router.get("/api/editing-media/frame-rate")
-async def get_editing_media_frame_rate(asset_id: str):
-    """Read a video asset's source frame rate with ffprobe when available."""
-    output_root = (Path(PROJECT_FILE_PATH) / "editPanel" / "uploads").resolve()
-    media_path = resolve_cache_path(asset_id)
-    try:
-        media_path.relative_to(output_root)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="素材路径无效") from exc
-    if not media_path.is_file():
-        raise HTTPException(status_code=404, detail="视频素材不存在")
-    ffprobe = shutil.which("ffprobe")
-    if not ffprobe:
-        return {"success": True, "fps": None}
-
-
-@router.post("/api/editing-exports")
-async def create_editing_export(request: EditingExportRequest, background_tasks: BackgroundTasks):
-    mode = request.mode.lower()
-    video_formats = {"mp4", "mov", "webm"}
-    audio_formats = {"mp3", "wav", "aac", "m4a"}
-    allowed = audio_formats if mode == "audio" else video_formats
-    extension = request.format.lower().lstrip(".")
-    if mode not in {"video", "audio"} or extension not in allowed:
-        raise HTTPException(status_code=400, detail="导出类型或格式不支持")
-    if not request.clips:
-        raise HTTPException(status_code=400, detail="时间线上没有可导出的片段")
-    export_id = uuid.uuid4().hex
-    _EDITING_EXPORTS[export_id] = {"status": "queued", "progress": 0, "error": None}
-    background_tasks.add_task(_run_editing_export, export_id, request.model_dump() if hasattr(request, "model_dump") else request.dict())
-    return {"success": True, "export_id": export_id}
-
-
-@router.get("/api/editing-exports/{export_id}")
-async def get_editing_export(export_id: str):
-    state = _EDITING_EXPORTS.get(export_id)
-    if not state:
-        raise HTTPException(status_code=404, detail="导出任务不存在")
-    return {key: value for key, value in state.items() if key != "path"}
-
-
-@router.get("/api/editing-exports/{export_id}/download")
-async def download_editing_export(export_id: str):
-    state = _EDITING_EXPORTS.get(export_id)
-    if not state or state.get("status") != "completed":
-        raise HTTPException(status_code=404, detail="导出文件尚未完成")
-    path = Path(state.get("path", "")).resolve()
-    try:
-        path.relative_to(EDITING_EXPORT_DIR.resolve())
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="导出文件路径无效") from exc
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="导出文件不存在")
-    return FileResponse(path, filename=path.name)
-    try:
-        result = subprocess.run(
-            [ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=avg_frame_rate,r_frame_rate", "-of", "json", str(media_path)],
-            capture_output=True, text=True, check=True, timeout=20,
-        )
-        streams = json.loads(result.stdout).get("streams", [])
-        if not streams:
-            return {"success": True, "fps": None}
-        stream = streams[0]
-        for key in ("avg_frame_rate", "r_frame_rate"):
-            rate = stream.get(key)
-            if rate and rate != "0/0":
-                fps = float(Fraction(rate))
-                if fps > 0:
-                    return {"success": True, "fps": fps}
-        return {"success": True, "fps": None}
-    except (subprocess.SubprocessError, OSError, ValueError, ZeroDivisionError, json.JSONDecodeError) as exc:
-        logger.warning("[API] Could not read frame rate for %s: %s", media_path, exc)
-        return {"success": True, "fps": None}
-
-
-@router.get("/api/media-library")
-async def list_generated_media():
-    """List generated image/video assets for the editing studio media bin."""
-    supported = {".mp4", ".webm", ".mov", ".mkv", ".png", ".jpg", ".jpeg", ".webp"}
-    media_roots = [OUTPUT_DIR, Path(PROJECT_FILE_PATH) / "editPanel" / "uploads"]
-    assets = []
-    for media_root in media_roots:
-        if not media_root.exists():
-            continue
-        for path in media_root.rglob("*"):
-            if not path.is_file() or path.suffix.lower() not in supported:
-                continue
-            try:
-                stat = path.stat()
-                relative = path.relative_to(PROJECT_FILE_PATH).as_posix()
-                assets.append({
-                    "id": relative,
-                    "filename": path.name,
-                    "type": "video" if path.suffix.lower() in {".mp4", ".webm", ".mov", ".mkv"} else "image",
-                    "url": f"/static/projects/{relative}",
-                    "size": stat.st_size,
-                    "modified_at": stat.st_mtime,
-                })
-            except OSError:
-                logger.warning("[API] Could not read media asset: %s", path)
-
-    assets.sort(key=lambda asset: asset["modified_at"], reverse=True)
-    return {"success": True, "assets": assets[:500]}
-
-
-@router.post("/api/upload-model")
-async def upload_model(file: UploadFile = File(...)):
-    """上传可在 Three.js 中预览的 3D 模型；当前优先支持单文件 GLB。"""
-    ext = (file.filename or "").rsplit(".", 1)[-1].lower()
-    if ext not in {"glb", "gltf", "obj", "fbx", "stl"}:
-        raise HTTPException(status_code=400, detail="仅支持 .glb、.gltf、.obj、.fbx、.stl 模型文件；推荐使用单文件 .glb")
-    try:
-        upload_dir = Path(PROJECT_FILE_PATH) / "freeCanvas" / "uploads" / "model"
-        upload_dir.mkdir(parents=True, exist_ok=True)
-        filename = f"model_{uuid.uuid4().hex[:8]}.{ext}"
-        save_path = upload_dir / filename
-        with save_path.open("wb") as f:
-            shutil.copyfileobj(file.file, f)
-        relative_path = save_path.relative_to(PROJECT_FILE_PATH).as_posix()
-        return {
-            "success": True,
-            "filename": filename,
-            "format": ext,
-            "size_bytes": save_path.stat().st_size,
-            "url": f"/static/projects/{relative_path}",
-        }
-    except Exception as e:
-        logger.error("[API] Model upload failed: %s", e)
-        raise HTTPException(status_code=500, detail=f"模型上传失败: {str(e)}")
-
 
 @router.post("/api/yolo-split")
 async def yolo_split(request: YoloSplitRequest):
@@ -682,7 +213,6 @@ async def yolo_split(request: YoloSplitRequest):
     except Exception as e:
         logger.exception("[API] YOLO split failed")
         raise HTTPException(status_code=500, detail=f"YOLO 拆分失败: {str(e)}")
-
 
 @router.post("/api/text-to-image")
 async def text_to_image(request: TextToImageRequest):
@@ -811,7 +341,6 @@ async def text_to_image(request: TextToImageRequest):
     else:
         logger.warning("[API] Unsupported model: %s", request.model)
         raise HTTPException(status_code=400, detail=f"不支持的模型: {request.model}")
-
 
 @router.post("/api/image-to-image")
 async def image_to_image(request: ImageToImageRequest):
@@ -953,7 +482,6 @@ async def image_to_image(request: ImageToImageRequest):
         logger.warning("[API] Unsupported model: %s", request.model)
         raise HTTPException(status_code=400, detail=f"不支持的模型: {request.model}")
 
-
 @router.post("/api/camera-angle")
 async def generate_camera_angle(request: CameraAngleRequest):
     """用 Qwen Image Edit 2511 Multiple-Angles LoRA 生成指定相机机位。"""
@@ -988,7 +516,6 @@ async def generate_camera_angle(request: CameraAngleRequest):
     except Exception as e:
         logger.error("[API] camera-angle failed: %s", e)
         raise HTTPException(status_code=500, detail=f"相机角度生成失败: {str(e)}")
-
 
 @router.post("/api/image-to-video")
 async def image_to_video(request: ImageToVideoRequest):
@@ -1122,783 +649,24 @@ async def image_to_video(request: ImageToVideoRequest):
         logger.error("[API] image-to-video failed: %s", e)
         raise HTTPException(status_code=500, detail=f"视频生成失败: {str(e)}")
 
-
 # ============ 打开文件所在文件夹 ============
-
-class OpenFolderRequest(BaseModel):
-    url: str = Field(..., description="图片/视频 URL（/static/projects/... 形式）")
-
-
-@router.post("/api/open-in-folder")
-async def open_in_folder(request: OpenFolderRequest):
-    """在系统文件管理器中打开文件所在文件夹并选中文件"""
-    raw_url = request.url.split("?")[0]
-    if "/static/projects/" not in raw_url:
-        raise HTTPException(status_code=400, detail="仅支持本地上传的文件")
-
-    relative = raw_url.split("/static/projects/", 1)[1]
-    file_path = resolve_cache_path(relative)
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail=f"文件不存在: {file_path}")
-
-    try:
-        if sys.platform == "win32":
-            # explorer /select,"C:\path\to\file.png" 打开文件夹并选中文件
-            subprocess.Popen(['explorer', '/select,', str(file_path)])
-        elif sys.platform == "darwin":
-            subprocess.Popen(['open', '-R', str(file_path)])
-        else:
-            subprocess.Popen(['xdg-open', str(file_path.parent)])
-        logger.info("[API] open-in-folder: %s", file_path)
-        return {"success": True}
-    except Exception as e:
-        logger.error("[API] open-in-folder failed: %s", e)
-        raise HTTPException(status_code=500, detail=f"打开文件夹失败: {str(e)}")
-
 
 # ============ Gemini 图像修复 (Inpainting) ============
 
-def _decode_data_url(data_url: str):
-    """解析 data URL，返回 (bytes, mime_type)"""
-    import base64
-    if data_url.startswith("data:"):
-        # data:image/png;base64,xxxx
-        header, b64data = data_url.split(",", 1)
-        mime = header.split(":")[1].split(";")[0]
-        return base64.b64decode(b64data), mime
-    raise ValueError("Not a data URL")
-
-
 # ============ 图片超清放大（SeedVR2） ============
-
-class UpscaleImageRequest(BaseModel):
-    image_url: str = Field(..., description="待放大的图片 URL（/static/projects/... 形式）")
-    ratio: int = Field(default=2, ge=2, le=4, description="放大倍数 2-4")
-    model: str = Field(default="comfyui-seedvr2", description="放大模型")
-
-
-def _read_image_size(data: bytes) -> tuple:
-    """零依赖解析图片字节流，返回 (width, height)。
-
-    支持 PNG / JPEG / WebP / GIF 常见格式。解析失败返回 (0, 0)。
-    用于放大接口计算目标分辨率（短边 × 倍数），避免引入 Pillow 依赖。
-    """
-    import struct
-    # PNG: 前 8 字节签名 \x89PNG，IHDR 在第 16-24 字节
-    if data[:8] == b"\x89PNG\r\n\x1a\n":
-        w, h = struct.unpack(">II", data[16:24])
-        return w, h
-    # JPEG: 扫描 SOFx 标记段读取尺寸
-    if data[:2] == b"\xff\xd8":
-        i = 2
-        while i < len(data) - 9:
-            if data[i] != 0xFF:
-                i += 1
-                continue
-            marker = data[i + 1]
-            # SOF0~SOF3, SOF5~SOF7, SOF9~SOF11, SOF13~SOF15（不含 SOF4/SOF8/SOF12）
-            if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
-                h, w = struct.unpack(">HH", data[i + 5:i + 9])
-                return w, h
-            seg_len = struct.unpack(">H", data[i + 2:i + 4])[0]
-            i += 2 + seg_len
-        return 0, 0
-    # WebP: RIFF....WEBP，VP8/VP8L/VP8X 段含尺寸
-    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
-        if data[12:16] in (b"VP8 ", b"VP8L"):
-            w = struct.unpack("<H", data[26:28])[0] & 0x3FFF
-            h = struct.unpack("<H", data[28:30])[0] & 0x3FFF
-            return w, h
-        if data[12:16] == b"VP8X":
-            w = struct.unpack("<I", data[24:27] + b"\x00")[0] + 1
-            h = struct.unpack("<I", data[27:30] + b"\x00")[0] + 1
-            return w, h
-        return 0, 0
-    # GIF: 6-10 字节为逻辑屏幕宽高（小端）
-    if data[:6] in (b"GIF87a", b"GIF89a"):
-        w, h = struct.unpack("<HH", data[6:10])
-        return w, h
-    return 0, 0
-
-
-@router.post("/api/upscale-image")
-async def upscale_image(request: UpscaleImageRequest):
-    """图片超清放大
-
-    使用 ComfyUI SeedVR2 工作流对单张图片进行超清放大。
-    根据原图短边 × 放大倍数计算目标分辨率（保持原宽高比）。
-    """
-    logger.info("[API] /api/upscale-image called, ratio=%s, model=%s", request.ratio, request.model)
-
-    comfyui = get_comfyui_client()
-    if not await comfyui.check_connection():
-        logger.error("[API] ComfyUI not running")
-        raise HTTPException(status_code=503, detail="ComfyUI 未运行，请先启动 ComfyUI")
-
-    # 1. 解析源图 URL 并读取真实尺寸，计算目标分辨率（短边像素）
-    full_url = _to_full_url(request.image_url)
-    try:
-        img_data, _, _ = _resolve_image_data(full_url)
-    except Exception as e:
-        logger.error("[API] upscale resolve image failed: %s", e)
-        raise HTTPException(status_code=400, detail=f"无法读取源图: {e}")
-
-    src_w, src_h = _read_image_size(img_data)
-    if src_w == 0 or src_h == 0:
-        # 尺寸解析失败时退回保守默认（短边 1080），避免阻断流程
-        resolution = 1080
-        logger.warning("[API] upscale image size parse failed, fallback resolution=%d", resolution)
-    else:
-        short_edge = min(src_w, src_h)
-        resolution = short_edge * request.ratio
-        # SeedVR2 要求偶数
-        resolution = max(16, resolution - (resolution % 2))
-        # 12GB 显存安全上限：目标短边不超过 1536。
-        # 实测 1882 短边（3344x1882≈629万像素）导致系统崩溃，
-        # 1536 短边对应约 422 万像素，配合 tiled VAE 在安全范围。
-        capped = False
-        if resolution > 1536:
-            resolution = 1536
-            capped = True
-            logger.warning("[API] upscale resolution capped to 1536 (src=%dx%d, ratio=%d wanted %d)",
-                           src_w, src_h, request.ratio, short_edge * request.ratio)
-        logger.info("[API] upscale src=%dx%d, ratio=%d, target resolution=%d%s",
-                    src_w, src_h, request.ratio, resolution, " (capped)" if capped else "")
-
-    task_folder = OUTPUT_DIR / "upscale"
-    try:
-        result = await comfyui.generate_seedvr2_upscale_and_wait(
-            source_image_url=full_url,
-            resolution=resolution,
-            seed=42,
-            timeout=600,
-        )
-        images = result.get("images", [])
-        if not images:
-            logger.error("[API] SeedVR2 returned no images")
-            raise HTTPException(status_code=500, detail="SeedVR2 未返回任何图片")
-
-        img = images[0]
-        comfyui_url = comfyui.get_image_url(
-            img["filename"], img.get("subfolder", ""), img.get("type", "output")
-        )
-        saved = _save_comfyui_image(comfyui_url, task_folder, "upscale")
-        logger.info("[API] upscale success, saved=%s", saved["local_path"])
-        return {
-            "success": True,
-            "model": request.model,
-            "images": [saved],
-        }
-    except TimeoutError as e:
-        logger.error("[API] upscale timeout: %s", e)
-        raise HTTPException(status_code=504, detail=str(e))
-    except Exception as e:
-        logger.error("[API] upscale failed: %s", e)
-        raise HTTPException(status_code=500, detail=f"放大失败: {str(e)}")
-
-
-@router.post("/api/gemini-inpaint")
-async def gemini_inpaint(request: InpaintRequest):
-    """Gemini 图像修复：base image + mask + prompt → new image"""
-    logger.info("[API] /api/gemini-inpaint called, model=%s", request.model)
-
-    try:
-        client = GoogleAIClient()
-    except ValueError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-    try:
-        # 解析 base image
-        if request.base_image.startswith("data:"):
-            base_data, base_mime = _decode_data_url(request.base_image)
-        else:
-            base_data, base_mime, _ = _resolve_image_data(_to_full_url(request.base_image))
-
-        # 解析 mask image
-        if request.mask_image.startswith("data:"):
-            mask_data, _ = _decode_data_url(request.mask_image)
-        else:
-            mask_data, _, _ = _resolve_image_data(_to_full_url(request.mask_image))
-
-        task_folder = OUTPUT_DIR / "inpaint"
-        result = await client.generate_inpaint_and_save(
-            prompt=request.prompt,
-            base_image_data=base_data,
-            base_image_mime=base_mime,
-            mask_image_data=mask_data,
-            model=request.model,
-            save_dir=task_folder,
-            aspect_ratio=request.aspect_ratio,
-        )
-        relative_path = result["local_path"].relative_to(PROJECT_FILE_PATH)
-        logger.info("[API] gemini-inpaint success, saved=%s", result["local_path"])
-        return {
-            "success": True,
-            "model": request.model,
-            "images": [
-                {
-                    "filename": result["filename"],
-                    "local_path": str(result["local_path"]),
-                    "url": f"/static/projects/{relative_path.as_posix()}",
-                }
-            ],
-        }
-    except Exception as e:
-        logger.error("[API] gemini-inpaint failed: %s", e)
-        raise HTTPException(status_code=500, detail=f"图像修复失败: {str(e)}")
-
-
-@router.post("/api/inpaint-image")
-async def comfyui_inpaint(request: ComfyInpaintRequest):
-    """使用 ComfyUI FLUX.2 或 FLUX.3 Klein 按前端蒙版局部重绘。"""
-    if request.model not in {"comfyui-flux2-inpaint", "comfyui-flux3-inpaint"}:
-        raise HTTPException(status_code=400, detail=f"暂不支持的修复模型: {request.model}")
-    comfyui = get_comfyui_client()
-    if not await comfyui.check_connection():
-        raise HTTPException(status_code=503, detail="ComfyUI 未运行，请先启动 ComfyUI")
-
-    try:
-        if request.mask_image.startswith("data:"):
-            mask_data, _ = _decode_data_url(request.mask_image)
-        else:
-            mask_data, _, _ = _resolve_image_data(_to_full_url(request.mask_image))
-        if request.model == "comfyui-flux3-inpaint":
-            result = await comfyui.generate_flux3_inpaint_and_wait(
-                source_image_url=_to_full_url(request.base_image),
-                mask_image_data=mask_data,
-                edit_prompt=request.prompt,
-                width=max(16, round(request.width / 16) * 16),
-                height=max(16, round(request.height / 16) * 16),
-                grow_mask_by=request.grow_mask_by,
-                timeout=900,
-            )
-        else:
-            result = await comfyui.generate_flux2_inpaint_and_wait(
-                source_image_url=_to_full_url(request.base_image),
-                mask_image_data=mask_data,
-                edit_prompt=request.prompt,
-                width=request.width,
-                height=request.height,
-                grow_mask_by=request.grow_mask_by,
-                timeout=600,
-            )
-        images = result.get("images", [])
-        if not images:
-            raise HTTPException(status_code=500, detail="ComfyUI 未返回修复图片")
-        image = images[0]
-        comfyui_url = comfyui.get_image_url(
-            image["filename"], image.get("subfolder", ""), image.get("type", "output")
-        )
-        prefix = "flux3_inpaint" if request.model == "comfyui-flux3-inpaint" else "flux2_inpaint"
-        saved = _save_comfyui_image(comfyui_url, OUTPUT_DIR / "inpaint", prefix)
-        return {"success": True, "model": request.model, "images": [saved]}
-    except HTTPException:
-        raise
-    except TimeoutError as e:
-        raise HTTPException(status_code=504, detail=str(e))
-    except Exception as e:
-        logger.error("[API] ComfyUI inpaint failed: %s", e)
-        raise HTTPException(status_code=500, detail=f"{request.model} 局部重绘失败: {str(e)}")
-
 
 # ============ Gemini 图生提示词 (Image-to-Prompt) ============
 
-@router.post("/api/gemini-image-to-prompt")
-async def gemini_image_to_prompt(request: ImageToPromptRequest):
-    """Gemini 图生提示词：分析图片，提取结构化风格信息"""
-    logger.info("[API] /api/gemini-image-to-prompt called, model=%s", request.model)
-
-    try:
-        client = GoogleAIClient()
-    except ValueError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-    try:
-        if request.image.startswith("data:"):
-            img_data, img_mime = _decode_data_url(request.image)
-        else:
-            img_data, img_mime, _ = _resolve_image_data(_to_full_url(request.image))
-
-        result = await client.image_to_prompt(
-            image_data=img_data,
-            image_mime=img_mime,
-            model=request.model,
-        )
-        logger.info("[API] gemini-image-to-prompt success")
-        return {
-            "success": True,
-            "data": result,
-        }
-    except Exception as e:
-        logger.error("[API] gemini-image-to-prompt failed: %s", e)
-        raise HTTPException(status_code=500, detail=f"图片分析失败: {str(e)}")
-
-
 # ============ Midjourney 概念图细化 (Refine) ============
-
-class RefineAnalyzeRequest(BaseModel):
-    image: str = Field(..., description="待细化的概念图 URL（/static/projects/... 形式）")
-
-
-class RefineGenerateRequest(BaseModel):
-    image: str = Field(..., description="源图 URL（/static/projects/... 形式）")
-    prompt: str = Field(..., description="用户确认/编辑后的细化提示词")
-    model: str = Field("flux-kontext", description="图生图工作流：flux-kontext 或 flux2-scene")
-    width: int = Field(0, ge=0, le=4096)
-    height: int = Field(0, ge=0, le=4096)
-
 
 # ============ 视频提示词生成 (Video Prompt) ============
 
-@router.post("/api/generate-video-prompt")
-async def generate_video_prompt(request: VideoPromptRequest):
-    """用 Qwen3-VL 8B 分析参考图片 + 用户需求，生成 MiniMax H3 视频提示词"""
-    logger.info("[API] /api/generate-video-prompt called, instruction=%s", request.instruction[:100])
-
-    raw_url = request.image.split("?")[0]
-    if "/static/projects/" not in raw_url:
-        raise HTTPException(status_code=400, detail="请上传图片（仅支持本地上传的图片）")
-
-    relative = raw_url.split("/static/projects/", 1)[1]
-    image_path = resolve_cache_path(relative)
-    if not image_path.exists():
-        raise HTTPException(status_code=404, detail=f"图片文件不存在: {image_path}")
-
-    llm_service = LLMVisionService()
-    if not llm_service.is_available():
-        raise HTTPException(
-            status_code=503,
-            detail="LLM 视觉模型未就绪。请确认 Ollama 已运行并下载模型：ollama pull qwen3-vl:8b"
-        )
-
-    try:
-        logger.info("[API] generate-video-prompt: 正在用 LLM 生成视频提示词...")
-        prompt = await llm_service.generate_video_prompt(
-            image_path=str(image_path),
-            user_instruction=request.instruction,
-        )
-        logger.info("[API] generate-video-prompt: 生成完成: %s...", prompt[:200])
-        return {"success": True, "prompt": prompt}
-    except Exception as e:
-        logger.error("[API] generate-video-prompt: 失败: %s", e)
-        raise HTTPException(status_code=500, detail=f"视频提示词生成失败: {str(e)}")
-
-
-@router.post("/api/shot-video-prompt")
-async def generate_shot_video_prompt(request: ShotVideoPromptRequest):
-    """读取 project_id + shot_id 的镜头资料，连同两张指定参考图生成 MiniMax 提示词。"""
-    if len(request.reference_images) != 2:
-        raise HTTPException(status_code=400, detail="镜头表生成需要恰好两张图片：人物概念图和镜头参考帧")
-    image_paths = []
-    for url in request.reference_images:
-        raw_url = url.split("?")[0]
-        if not raw_url.startswith("/static/projects/"):
-            raise HTTPException(status_code=400, detail="参考图必须是当前项目中的本地图片")
-        path = resolve_cache_path(raw_url.removeprefix("/static/projects/"))
-        if not path.exists():
-            raise HTTPException(status_code=404, detail=f"参考图不存在: {path.name}")
-        image_paths.append(str(path))
-
-    data, shot, concepts = get_project_shot(request.project_id, request.shot_id)
-    character_ids = set(shot.get("characters") or [])
-    location_id = shot.get("location")
-    prompt_shot = {**shot, "concept_context": {
-        "characters": [{key: item.get(key, "") for key in ("id", "name", "description", "environment")}
-                       for item in concepts.get("characters", []) if item.get("id") in character_ids],
-        "location": next(({key: item.get(key, "") for key in ("id", "name", "environment", "description")}
-                          for item in concepts.get("locations", []) if item.get("id") == location_id), {}),
-    }}
-    llm_service = LLMVisionService()
-    if not llm_service.is_available():
-        raise HTTPException(status_code=503, detail="LLM 视觉模型未就绪，请启动 Ollama 并确认 qwen3-vl:8b 已下载")
-    try:
-        result = await llm_service.generate_shot_video_prompt(
-            image_paths=image_paths, shot=prompt_shot, project_name=data.get("project_name", data.get("name", ""))
-        )
-        return {"success": True, **result, "shot_no": shot.get("shot_no", shot.get("id", ""))}
-    except Exception as exc:
-        logger.error("[API] shot-video-prompt failed: %s", exc)
-        raise HTTPException(status_code=500, detail=f"镜头表视频提示词生成失败: {exc}") from exc
-
-
 # ============ Midjourney 概念图细化路由 ============
-
-
-@router.post("/api/model-view-prompt")
-async def model_view_prompt(request: ModelViewPromptRequest):
-    """用 Qwen3-VL 根据图片和用户要求生成三视图正视图 Flux 提示词。"""
-    raw_url = request.image.split("?")[0]
-    if "/static/projects/" not in raw_url:
-        raise HTTPException(status_code=400, detail="请上传图片（仅支持本地上传的图片）")
-    relative = raw_url.split("/static/projects/", 1)[1]
-    image_path = resolve_cache_path(relative)
-    if not image_path.exists():
-        raise HTTPException(status_code=404, detail=f"图片文件不存在: {image_path}")
-    llm_service = LLMVisionService()
-    if not llm_service.is_available():
-        raise HTTPException(status_code=503, detail="Qwen3-VL 未就绪，请确认 Ollama 已运行并下载模型：ollama pull qwen3-vl:8b")
-    try:
-        prompt = await llm_service.generate_model_view_prompt(str(image_path), request.instruction)
-        return {"success": True, "prompt": prompt}
-    except Exception as e:
-        logger.error("[API] model-view-prompt failed: %s", e)
-        raise HTTPException(status_code=500, detail=f"模型三视图提示词生成失败: {str(e)}")
-
-
-@router.post("/api/concept-head-crop")
-async def concept_head_crop(request: ConceptHeadCropRequest):
-    """用本地人脸检测定位正面全身图的下巴，为前端无头身体裁切提供默认位置。"""
-    raw_url = request.image.split("?")[0]
-    if "/static/projects/" not in raw_url:
-        raise HTTPException(status_code=400, detail="仅支持应用内已保存的图片")
-    relative = raw_url.split("/static/projects/", 1)[1]
-    image_path = resolve_cache_path(relative)
-    if not image_path.exists():
-        raise HTTPException(status_code=404, detail=f"图片文件不存在: {image_path}")
-    try:
-        import asyncio
-        chin_y = await asyncio.to_thread(locate_chin_y, str(image_path))
-        return {"success": True, "chin_y": chin_y, "method": "opencv_haar"}
-    except Exception as exc:
-        logger.error("[API] concept-head-crop face detection failed: %s", exc)
-        raise HTTPException(status_code=422, detail=f"本地人脸检测未能定位人脸: {exc}") from exc
-
-
-@router.post("/api/refine-analyze")
-async def refine_analyze(request: RefineAnalyzeRequest):
-    """第一步：用 Qwen3-VL 8B 分析概念图，返回细化提示词（不生图）"""
-    logger.info("[API] /api/refine-analyze called")
-
-    raw_url = request.image.split("?")[0]
-    if "/static/projects/" not in raw_url:
-        raise HTTPException(status_code=400, detail="请上传图片（仅支持本地上传的图片）")
-
-    relative = raw_url.split("/static/projects/", 1)[1]
-    image_path = resolve_cache_path(relative)
-    if not image_path.exists():
-        raise HTTPException(status_code=404, detail=f"图片文件不存在: {image_path}")
-
-    llm_service = LLMVisionService()
-    if not llm_service.is_available():
-        raise HTTPException(
-            status_code=503,
-            detail="LLM 视觉模型未就绪。请确认 Ollama 已运行并下载模型：ollama pull qwen3-vl:8b"
-        )
-
-    try:
-        logger.info("[API] refine-analyze: 正在用 LLM 分析概念图...")
-        refine_prompt = await llm_service.analyze_midjourney_refine(
-            image_path=str(image_path),
-        )
-        logger.info("[API] refine-analyze: LLM 生成提示词: %s...", refine_prompt[:200])
-        return {"success": True, "prompt": refine_prompt}
-    except Exception as e:
-        logger.error("[API] refine-analyze: LLM 分析失败: %s", e)
-        raise HTTPException(status_code=500, detail=f"概念图分析失败: {str(e)}")
-
-
-@router.post("/api/refine-generate")
-async def refine_generate(request: RefineGenerateRequest):
-    """第二步：用 Flux.2 Klein 9B 图生图，根据用户确认的提示词细化"""
-    logger.info("[API] /api/refine-generate called, prompt=%s...", request.prompt[:100])
-
-    # 读取原图尺寸（保持分辨率一致）
-    raw_url = request.image.split("?")[0]
-    img_data, _, _ = _resolve_image_data(raw_url)
-    src_w, src_h = _read_image_size(img_data)
-    if src_w == 0 or src_h == 0:
-        src_w, src_h = 1024, 1024
-        logger.warning("[API] refine-generate: 尺寸解析失败，回退到 1024x1024")
-    if request.width and request.height:
-        src_w, src_h = request.width, request.height
-    src_w = max(16, src_w - (src_w % 16))
-    src_h = max(16, src_h - (src_h % 16))
-    logger.info("[API] refine-generate: 源图尺寸 %dx%d (对齐 16)", src_w, src_h)
-
-    comfyui = get_comfyui_client()
-    if not await comfyui.check_connection():
-        raise HTTPException(status_code=503, detail="ComfyUI 未运行，请先启动 ComfyUI")
-
-    source_image_url = _to_full_url(request.image)
-    task_folder = OUTPUT_DIR / "refine"
-
-    try:
-        logger.info("[API] refine-generate: workflow=%s prompt=%s", request.model, request.prompt[:500])
-        if request.model == "flux-kontext":
-            # 使用与图生图预设相同的 Flux.2 Kontext 参考图工作流，
-            # 该工作流包含 FluxGuidance + ReferenceLatent，提示词对图像编辑更稳定。
-            result = await comfyui.generate_flux_kontext_i2i_and_wait(
-                source_image_urls=[source_image_url],
-                edit_prompt=request.prompt,
-                negative_prompt="",
-                steps=20,
-                cfg=1.0,
-                guidance=4.0,
-                seed=-1,
-                width=src_w,
-                height=src_h,
-                timeout=600,
-            )
-        else:
-            result = await comfyui.generate_flux2_scene_hdr_and_wait(
-                source_image_url=source_image_url,
-                edit_prompt=request.prompt,
-                negative_prompt="",
-                steps=8,
-                cfg=4.0,
-                seed=-1,
-                width=src_w,
-                height=src_h,
-                denoise=0.4,
-                timeout=600,
-            )
-        images = result.get("images", [])
-        if not images:
-            raise HTTPException(status_code=500, detail="ComfyUI 未返回任何图片")
-
-        img = images[0]
-        comfyui_url = comfyui.get_image_url(
-            img["filename"], img.get("subfolder", ""), img.get("type", "output")
-        )
-        saved = _save_comfyui_image(comfyui_url, task_folder, "refine")
-        logger.info("[API] refine-generate: 细化成功, saved=%s", saved["local_path"])
-        return {"success": True, "model": "flux2-klein-refine", "images": [saved]}
-    except TimeoutError as e:
-        logger.error("[API] refine-generate: 超时: %s", e)
-        raise HTTPException(status_code=504, detail=str(e))
-    except Exception as e:
-        logger.error("[API] refine-generate: 失败: %s", e)
-        raise HTTPException(status_code=500, detail=f"细化失败: {str(e)}")
-
 
 # ============ 场景图 HDR 生成 (Scene HDR) ============
 
-@router.post("/api/scene-hdr")
-async def scene_hdr(request: SceneHDRRequest):
-    """
-    场景图 HDR 生成：
-    1. 用本地 qwen3-vl:8b 多模态 LLM 分析场景图
-    2. LLM 生成"去人物 + 2×2 网格 4 角度"的提示词
-    3. 根据所选模型（QwenImage Edit / Flux.2 Klein 9B）生成 2×2 网格图
-    """
-    logger.info("[API] /api/scene-hdr called")
-
-    # 1. 解析场景图本地路径
-    raw_url = request.image.split("?")[0]
-    if "/static/projects/" not in raw_url:
-        raise HTTPException(status_code=400, detail="请上传场景图（仅支持本地上传的图片）")
-
-    relative = raw_url.split("/static/projects/", 1)[1]
-    scene_image_path = resolve_cache_path(relative)
-    if not scene_image_path.exists():
-        raise HTTPException(status_code=404, detail=f"场景图文件不存在: {scene_image_path}")
-
-    logger.info("[API] scene-hdr: 场景图路径=%s", scene_image_path)
-
-    # 2. 用 LLM 分析场景图并生成提示词
-    llm_service = LLMVisionService()
-    if not llm_service.is_available():
-        raise HTTPException(
-            status_code=503,
-            detail="LLM 视觉模型未就绪。请确认 Ollama 已运行并下载模型：ollama pull qwen3-vl:8b"
-        )
-
-    try:
-        logger.info("[API] scene-hdr: 正在用 LLM 分析场景图...")
-        hdr_prompt = await llm_service.analyze_scene_for_hdr(
-            image_path=str(scene_image_path),
-            custom_instruction=request.custom_instruction,
-        )
-        logger.info("[API] scene-hdr: LLM 生成提示词: %s...", hdr_prompt[:200])
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=503, detail=str(e))
-    except ImportError as e:
-        raise HTTPException(status_code=500, detail=f"依赖缺失: {e}")
-    except Exception as e:
-        logger.error("[API] scene-hdr: LLM 分析失败: %s", e)
-        raise HTTPException(status_code=500, detail=f"场景图分析失败: {str(e)}")
-
-    # 3. 根据所选模型生成 2×2 网格图
-    comfyui = get_comfyui_client()
-    if not await comfyui.check_connection():
-        raise HTTPException(status_code=503, detail="ComfyUI 未运行，请先启动 ComfyUI")
-
-    task_folder = OUTPUT_DIR / "scene_hdr"
-    source_image_url = _to_full_url(request.image)
-
-    try:
-        if request.model == "flux2-klein":
-            logger.info("[API] scene-hdr: 调用 Flux.2 Klein 9B 图生图生成...")
-            result = await comfyui.generate_flux2_scene_hdr_and_wait(
-                source_image_url=source_image_url,
-                edit_prompt=hdr_prompt,
-                negative_prompt=request.negative_prompt,
-                timeout=600,
-            )
-            result_model = "flux2-klein-9b"
-        elif request.model == "flux3-klein":
-            logger.info("[API] scene-hdr: 调用 FLUX.3 Klein 图生图生成...")
-            result = await comfyui.generate_flux3_i2i_and_wait(
-                source_image_url=source_image_url,
-                edit_prompt=hdr_prompt,
-                width=1024,
-                height=1024,
-                steps=30,
-                guidance=3.5,
-                denoise=0.65,
-                timeout=900,
-            )
-            result_model = "flux3-klein-base"
-        else:
-            logger.info("[API] scene-hdr: 调用 QwenImage Edit 生成 2×2 网格图...")
-            result = await comfyui.generate_character_variant_and_wait(
-                source_image_url=source_image_url,
-                variant_prompt=hdr_prompt,
-                negative_prompt=request.negative_prompt,
-                timeout=600,
-            )
-            result_model = "qwen-image-edit-hdr"
-
-        images = result.get("images", [])
-        if not images:
-            raise HTTPException(status_code=500, detail="ComfyUI 未返回任何图片")
-
-        img = images[0]
-        comfyui_url = comfyui.get_image_url(
-            img["filename"], img.get("subfolder", ""), img.get("type", "output")
-        )
-        saved = _save_comfyui_image(comfyui_url, task_folder, "scene_hdr")
-        logger.info("[API] scene-hdr: 生成成功, saved=%s", saved["local_path"])
-
-        return {
-            "success": True,
-            "model": result_model,
-            "images": [saved],
-            "llm_prompt": hdr_prompt,
-        }
-    except TimeoutError as e:
-        logger.error("[API] scene-hdr: 生成超时: %s", e)
-        raise HTTPException(status_code=504, detail=str(e))
-    except Exception as e:
-        logger.error("[API] scene-hdr: 生成失败: %s", e)
-        raise HTTPException(status_code=500, detail=f"场景图 HDR 生成失败: {str(e)}")
-
-
 # ============ 上传文件清理 ============
 
-import re as _re
-
 # /static/projects/<相对路径> 的引用前缀
-_STATIC_PREFIX = "/static/projects/"
 
 # 存放引用 uploads 文件的 JSON 目录（独立自由画布 + 镜头表内嵌画布 + concepts）
-_REF_JSON_DIRS = [
-    Path(PROJECT_FILE_PATH) / "freeCanvas" / "jsons",
-    Path(PROJECT_FILE_PATH) / "shotBreakdown" / "jsons",
-    Path(PROJECT_FILE_PATH) / "shotBreakdown" / "jsons" / "concepts",
-]
-
-
-def _collect_referenced_rel_paths() -> set:
-    """扫描所有镜头表/concepts JSON，收集被引用的文件相对路径（相对 PROJECT_FILE_PATH）。
-
-    匹配 JSON 文本里所有 /static/projects/xxx 形式的字符串，提取 xxx 部分。
-    """
-    referenced = set()
-    for d in _REF_JSON_DIRS:
-        if not d.exists():
-            continue
-        for json_path in d.glob("*.json"):
-            try:
-                text = json_path.read_text(encoding="utf-8")
-            except Exception:
-                continue
-            for m in _re.finditer(r"/static/projects/([^\s\"',\]\}]+)", text):
-                try:
-                    canonical_path = resolve_cache_path(m.group(1))
-                    referenced.add(canonical_path.relative_to(Path(PROJECT_FILE_PATH).resolve()).as_posix())
-                except ValueError:
-                    continue
-    return referenced
-
-
-@router.post("/api/uploads/cleanup")
-async def cleanup_uploads():
-    """清理 uploads 目录中未被任何画布项目/镜头表引用的孤立文件。
-
-    只清理 generation/uploads/ 子目录，不影响生成结果目录。
-    返回删除的文件数和释放的空间。
-    """
-    upload_dir = Path(PROJECT_FILE_PATH) / "generation" / "uploads" / "image"
-    if not upload_dir.exists():
-        return {"success": True, "deleted": 0, "freed_bytes": 0, "message": "uploads 目录不存在"}
-
-    referenced = _collect_referenced_rel_paths()
-    deleted_files = []
-    freed_bytes = 0
-
-    for f in upload_dir.iterdir():
-        if not f.is_file():
-            continue
-        try:
-            rel = f.relative_to(PROJECT_FILE_PATH).as_posix()
-        except ValueError:
-            continue
-        # 不在引用集合中 => 孤立文件，删除
-        if rel not in referenced:
-            try:
-                size = f.stat().st_size
-                f.unlink()
-                deleted_files.append(f.name)
-                freed_bytes += size
-            except Exception as e:
-                logger.warning("[Cleanup] 删除失败 %s: %s", f, e)
-
-    logger.info("[Cleanup] uploads 清理完成: 删除 %d 个文件, 释放 %.2f KB",
-                len(deleted_files), freed_bytes / 1024)
-    return {
-        "success": True,
-        "deleted": len(deleted_files),
-        "freed_bytes": freed_bytes,
-        "freed_kb": round(freed_bytes / 1024, 2),
-        "deleted_files": deleted_files[:50],  # 最多返回前 50 个文件名
-    }
-
-
-@router.get("/api/uploads/orphans")
-async def list_orphans():
-    """列出 uploads 目录中未被引用的孤立文件（不删除，仅预览）。"""
-    upload_dir = Path(PROJECT_FILE_PATH) / "generation" / "uploads" / "image"
-    if not upload_dir.exists():
-        return {"success": True, "orphans": [], "total_size_bytes": 0}
-
-    referenced = _collect_referenced_rel_paths()
-    orphans = []
-    total_size = 0
-
-    for f in upload_dir.iterdir():
-        if not f.is_file():
-            continue
-        try:
-            rel = f.relative_to(PROJECT_FILE_PATH).as_posix()
-        except ValueError:
-            continue
-        if rel not in referenced:
-            try:
-                size = f.stat().st_size
-                orphans.append({
-                    "filename": f.name,
-                    "size_bytes": size,
-                    "size_kb": round(size / 1024, 2),
-                })
-                total_size += size
-            except Exception:
-                pass
-
-    return {
-        "success": True,
-        "orphans": orphans,
-        "count": len(orphans),
-        "total_size_bytes": total_size,
-        "total_size_kb": round(total_size / 1024, 2),
-    }
