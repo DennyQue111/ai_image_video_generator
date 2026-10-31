@@ -71,7 +71,7 @@ ai_image_video_generator/
 │       │   ├── editing-studio/ # 剪辑台
 │       │   └── generation/     # 文生图、图生图、图生视频等工具页
 │       └── shared/             # 全局样式及跨功能共享代码
-├── outputs/_temp/              # 生成结果、画布项目、镜头表与 Concepts
+├── caches/                     # 按页签保存的生成素材、项目 JSON 与导出文件
 └── README.md
 ```
 
@@ -149,9 +149,9 @@ ipconfig
 
 ## 数据与输出
 
-- 图片/视频默认写入 `outputs/_temp/generator_outputs/`。
-- 自由画布项目保存在 `outputs/_temp/freeCanvas/`。
-- 镜头表保存在 `outputs/_temp/shotbreakdown/`，Concepts 保存在 `outputs/_temp/concepts/`。
+- 生成素材保存在 `caches/generation/exports/`，上传素材保存在对应功能页签的 `uploads/` 子目录。
+- 自由画布项目保存在 `caches/freeCanvas/jsons/`，镜头表和 Concepts 保存在 `caches/shotBreakdown/jsons/`。
+- 剪辑台项目、上传素材与导出文件分别保存在 `caches/editPanel/jsons/`、`caches/editPanel/uploads/` 和 `caches/editPanel/exports/`。
 - 这些都是工作数据；清理前请备份需要保留的素材和 JSON。
 
 ## 常见问题
@@ -166,12 +166,12 @@ ipconfig
 
 ### 导演台或画布没有恢复
 
-导演台会随自由画布项目 JSON 保存。浏览器临时缓存不等同于正式项目保存；重要镜头请使用项目栏保存，并保留对应的 `outputs/_temp` 数据。
+导演台会随自由画布项目 JSON 保存。浏览器临时缓存不等同于正式项目保存；重要镜头请使用项目栏保存，并保留对应的 `caches` 数据。
 
 ## 安全说明
 
 - 不要提交 `backend/.env` 或真实 API Key。
-- `outputs/` 可能包含项目素材和生成内容；分享或清理前请确认其中不含敏感资料。
+- `caches/` 可能包含项目素材和生成内容；分享或清理前请确认其中不含敏感资料。
 
 <!-- 以下是旧版 README 内容，仅为保留历史文本，不再作为当前说明展示。
 
@@ -219,7 +219,7 @@ ai_image_video_generator/
 │   │   └── ...
 │   ├── package.json
 │   └── vite.config.js           # 开发代理配置
-├── outputs/                     # 生成的图片/视频默认输出目录
+├── caches/                      # 生成素材、项目 JSON、上传与导出文件
 └── README.md
 ```
 
@@ -314,7 +314,7 @@ npm run dev
 3. 选择顶部 Tab 切换功能：文生图 / 图生图 / 图生视频。
 4. 在“模型”下拉框中选择要使用的后端模型。
 5. 填写必要参数后点击生成按钮。
-6. 生成的图片/视频会保存到 `outputs/_temp/generator_outputs/` 目录下，同时在前端展示结果。
+6. 生成的图片/视频会保存到 `caches/generation/exports/` 目录下，同时在前端展示结果。
 
 ---
 

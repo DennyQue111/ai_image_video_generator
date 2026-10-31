@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -14,8 +15,10 @@ logging.basicConfig(
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.responses import FileResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from constants import PROJECT_FILE_PATH
+from constants import PROJECT_FILE_PATH, resolve_cache_path
 from routes.generation import router as generation_router
 from routes.projects import router as projects_router
 from routes.shot_breakdown import router as shot_breakdown_router
@@ -33,7 +36,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.mount("/static/projects", StaticFiles(directory=PROJECT_FILE_PATH), name="projects")
+class CacheStaticFiles(StaticFiles):
+    async def get_response(self, path: str, scope):
+        resolved = resolve_cache_path(path)
+        try:
+            resolved.relative_to(Path(PROJECT_FILE_PATH).resolve())
+        except ValueError:
+            raise StarletteHTTPException(status_code=404)
+        if not resolved.is_file():
+            raise StarletteHTTPException(status_code=404)
+        return FileResponse(resolved)
+
+
+app.mount("/static/projects", CacheStaticFiles(directory=PROJECT_FILE_PATH), name="projects")
 
 
 @app.get("/")

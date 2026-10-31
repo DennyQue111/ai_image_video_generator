@@ -4,7 +4,7 @@ import axios from 'axios'
 
 function formatErr(err) { return err?.response?.data?.detail || err?.message || String(err) }
 
-/** 独立自由画布项目栏；存储在 outputs/_temp/freeCanvas。 */
+/** 独立自由画布项目栏；项目存储在 caches/freeCanvas/jsons。 */
 export default function ProjectBar({ currentName, onSave, onLoad, onNew, onDelete }) {
   const [projects, setProjects] = useState([])
   const [open, setOpen] = useState(false)

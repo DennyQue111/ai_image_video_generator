@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { ChevronDown, FolderOpen, Loader2, Save, Settings2, Trash2 } from 'lucide-react'
+import { ChevronDown, FolderOpen, Loader2, RefreshCw, Save, Settings2, Trash2 } from 'lucide-react'
 import axios from 'axios'
 
 function formatErr(error) { return error?.response?.data?.detail || error?.message || String(error) }
 
-export default function EditingProjectBar({ currentName, onNameChange, onSave, onLoad, onDelete, frameRate, onFrameRateChange }) {
+export default function EditingProjectBar({ currentName, onNameChange, onSave, onLoad, onDelete, onRefreshProject, frameRate, onFrameRateChange }) {
   const [projects, setProjects] = useState([])
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -61,6 +61,11 @@ export default function EditingProjectBar({ currentName, onNameChange, onSave, o
     </div>
     <input className="editing-project-name" value={nameInput} onChange={(event) => setNameInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') save() }} placeholder="剪辑台项目名称" aria-label="剪辑台项目名称" disabled={busy} />
     <button className="edit-tool-button" onClick={save} disabled={busy} title="保存项目"><Save size={15} />保存</button>
+    <button className="edit-tool-button" onClick={async () => {
+      if (!currentName) return alert('请先保存项目，再刷新项目时间线。')
+      setBusy(true)
+      try { await onRefreshProject(currentName) } catch (error) { alert(`刷新项目失败：${formatErr(error)}`) } finally { setBusy(false) }
+    }} disabled={busy || !currentName} title="重新载入已保存的项目时间线" aria-label="刷新项目时间线">{busy ? <Loader2 size={15} className="spin" /> : <RefreshCw size={15} />}</button>
     <div className="editing-project-dropdown">
       <button className={`edit-tool-button ${settingsOpen ? 'active' : ''}`} onClick={() => setSettingsOpen((value) => !value)} title="项目配置" aria-label="项目配置"><Settings2 size={15} />配置</button>
       {settingsOpen && <div className="editing-settings-menu">

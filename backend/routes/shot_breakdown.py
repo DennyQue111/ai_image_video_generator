@@ -11,8 +11,8 @@ from constants import PROJECT_FILE_PATH
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-SHOT_BREAKDOWN_DIR = Path(PROJECT_FILE_PATH) / "_temp" / "shotbreakdown"
-CONCEPTS_DIR = Path(PROJECT_FILE_PATH) / "_temp" / "concepts"
+SHOT_BREAKDOWN_DIR = Path(PROJECT_FILE_PATH) / "shotBreakdown" / "jsons"
+CONCEPTS_DIR = SHOT_BREAKDOWN_DIR / "concepts"
 SHOT_BREAKDOWN_DIR.mkdir(parents=True, exist_ok=True)
 CONCEPTS_DIR.mkdir(parents=True, exist_ok=True)
 

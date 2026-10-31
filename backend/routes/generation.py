@@ -18,7 +18,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, BackgroundTasks
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from constants import PROJECT_FILE_PATH
+from constants import PROJECT_FILE_PATH, resolve_cache_path
 from services.comfyui_client import get_comfyui_client
 from services.face_detection import locate_chin_y
 from services.google_ai_client import GoogleAIClient
@@ -30,10 +30,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 style_config = StyleConfig()
 
-OUTPUT_DIR = Path(PROJECT_FILE_PATH) / "_temp" / "generator_outputs"
+OUTPUT_DIR = Path(PROJECT_FILE_PATH) / "generation" / "exports"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-EDITING_EXPORT_DIR = OUTPUT_DIR / "editing_exports"
+EDITING_EXPORT_DIR = Path(PROJECT_FILE_PATH) / "editPanel" / "exports"
 EDITING_EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+EDITING_VIDEO_EXPORT_DIR = EDITING_EXPORT_DIR / "video"
+EDITING_AUDIO_EXPORT_DIR = EDITING_EXPORT_DIR / "audio"
+EDITING_VIDEO_EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+EDITING_AUDIO_EXPORT_DIR.mkdir(parents=True, exist_ok=True)
 _EDITING_EXPORTS = {}
 
 
@@ -79,7 +83,7 @@ def _run_editing_export(export_id: str, request_data: dict):
         if resolution == "source" and mode == "video":
             for clip in clips:
                 if clip.get("type") not in {"video", "image"}: continue
-                candidate = (Path(PROJECT_FILE_PATH) / str(clip.get("assetId") or "")).resolve()
+                candidate = resolve_cache_path(str(clip.get("assetId") or ""))
                 probe = shutil.which("ffprobe")
                 if not probe or not candidate.is_file(): continue
                 probe_result = subprocess.run([probe, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "json", str(candidate)], capture_output=True, text=True, timeout=15)
@@ -103,9 +107,9 @@ def _run_editing_export(export_id: str, request_data: dict):
                     audio_segments.append(f"[a{gap_index}]")
                 cursor = start
             asset_id = str(clip.get("assetId") or "")
-            source = (Path(PROJECT_FILE_PATH) / asset_id).resolve()
+            source = resolve_cache_path(asset_id)
             try:
-                source.relative_to(OUTPUT_DIR.resolve())
+                source.relative_to(Path(PROJECT_FILE_PATH).resolve())
             except ValueError as exc:
                 raise ValueError("片段素材路径无效") from exc
             if not source.is_file():
@@ -142,7 +146,8 @@ def _run_editing_export(export_id: str, request_data: dict):
                 audio_segments.append(f"[a{index}]")
             cursor = start + duration
         ext = request_data.get("format", "mp4")
-        output = EDITING_EXPORT_DIR / f"{export_id}.{ext}"
+        export_dir = EDITING_AUDIO_EXPORT_DIR if mode == "audio" else EDITING_VIDEO_EXPORT_DIR
+        output = export_dir / f"{export_id}.{ext}"
         if mode == "audio":
             if not audio_segments:
                 raise ValueError("时间线中的视频没有可用音轨，无法导出音频")
@@ -363,7 +368,7 @@ def _resolve_image_data(url: str):
     logger.info("[API] Resolving image data from %s", raw_url)
     if "/static/projects/" in raw_url:
         relative = raw_url.split("/static/projects/", 1)[1]
-        local_path = Path(PROJECT_FILE_PATH) / relative
+        local_path = resolve_cache_path(relative)
         if not local_path.exists():
             logger.error("[API] Local image not found: %s", local_path)
             raise FileNotFoundError(f"图片文件不存在: {local_path}")
@@ -444,7 +449,7 @@ async def upload_image(file: UploadFile = File(...)):
     """上传图片到临时目录，返回可访问的 URL"""
     logger.info("[API] /api/upload-image called, filename=%s", file.filename)
     try:
-        upload_dir = OUTPUT_DIR / "uploads"
+        upload_dir = Path(PROJECT_FILE_PATH) / "generation" / "uploads" / "image"
         upload_dir.mkdir(parents=True, exist_ok=True)
 
         ext = (file.filename or "png").rsplit(".", 1)[-1].lower()
@@ -475,7 +480,8 @@ async def upload_editing_media(file: UploadFile = File(...)):
     supported = {".png", ".jpg", ".jpeg", ".webp", ".mp4", ".webm", ".mov", ".mkv"}
     if ext not in supported:
         raise HTTPException(status_code=400, detail="仅支持 PNG、JPG、WEBP、MP4、WEBM、MOV 或 MKV 文件")
-    upload_dir = OUTPUT_DIR / "editing_uploads"
+    media_kind = "video" if ext in {".mp4", ".webm", ".mov", ".mkv"} else "image"
+    upload_dir = Path(PROJECT_FILE_PATH) / "editPanel" / "uploads" / media_kind
     upload_dir.mkdir(parents=True, exist_ok=True)
     filename = f"editing_{uuid.uuid4().hex[:12]}{ext}"
     save_path = upload_dir / filename
@@ -496,8 +502,8 @@ async def upload_editing_media(file: UploadFile = File(...)):
 @router.get("/api/editing-media/frame-rate")
 async def get_editing_media_frame_rate(asset_id: str):
     """Read a video asset's source frame rate with ffprobe when available."""
-    output_root = OUTPUT_DIR.resolve()
-    media_path = (Path(PROJECT_FILE_PATH) / asset_id).resolve()
+    output_root = (Path(PROJECT_FILE_PATH) / "editPanel" / "uploads").resolve()
+    media_path = resolve_cache_path(asset_id)
     try:
         media_path.relative_to(output_root)
     except ValueError as exc:
@@ -572,26 +578,27 @@ async def download_editing_export(export_id: str):
 async def list_generated_media():
     """List generated image/video assets for the editing studio media bin."""
     supported = {".mp4", ".webm", ".mov", ".mkv", ".png", ".jpg", ".jpeg", ".webp"}
-    if not OUTPUT_DIR.exists():
-        return {"success": True, "assets": []}
-
+    media_roots = [OUTPUT_DIR, Path(PROJECT_FILE_PATH) / "editPanel" / "uploads"]
     assets = []
-    for path in OUTPUT_DIR.rglob("*"):
-        if not path.is_file() or path.suffix.lower() not in supported:
+    for media_root in media_roots:
+        if not media_root.exists():
             continue
-        try:
-            stat = path.stat()
-            relative = path.relative_to(PROJECT_FILE_PATH).as_posix()
-            assets.append({
-                "id": relative,
-                "filename": path.name,
-                "type": "video" if path.suffix.lower() in {".mp4", ".webm", ".mov", ".mkv"} else "image",
-                "url": f"/static/projects/{relative}",
-                "size": stat.st_size,
-                "modified_at": stat.st_mtime,
-            })
-        except OSError:
-            logger.warning("[API] Could not read media asset: %s", path)
+        for path in media_root.rglob("*"):
+            if not path.is_file() or path.suffix.lower() not in supported:
+                continue
+            try:
+                stat = path.stat()
+                relative = path.relative_to(PROJECT_FILE_PATH).as_posix()
+                assets.append({
+                    "id": relative,
+                    "filename": path.name,
+                    "type": "video" if path.suffix.lower() in {".mp4", ".webm", ".mov", ".mkv"} else "image",
+                    "url": f"/static/projects/{relative}",
+                    "size": stat.st_size,
+                    "modified_at": stat.st_mtime,
+                })
+            except OSError:
+                logger.warning("[API] Could not read media asset: %s", path)
 
     assets.sort(key=lambda asset: asset["modified_at"], reverse=True)
     return {"success": True, "assets": assets[:500]}
@@ -604,7 +611,7 @@ async def upload_model(file: UploadFile = File(...)):
     if ext not in {"glb", "gltf", "obj", "fbx", "stl"}:
         raise HTTPException(status_code=400, detail="仅支持 .glb、.gltf、.obj、.fbx、.stl 模型文件；推荐使用单文件 .glb")
     try:
-        upload_dir = OUTPUT_DIR / "models"
+        upload_dir = Path(PROJECT_FILE_PATH) / "freeCanvas" / "uploads" / "model"
         upload_dir.mkdir(parents=True, exist_ok=True)
         filename = f"model_{uuid.uuid4().hex[:8]}.{ext}"
         save_path = upload_dir / filename
@@ -1130,7 +1137,7 @@ async def open_in_folder(request: OpenFolderRequest):
         raise HTTPException(status_code=400, detail="仅支持本地上传的文件")
 
     relative = raw_url.split("/static/projects/", 1)[1]
-    file_path = Path(PROJECT_FILE_PATH) / relative
+    file_path = resolve_cache_path(relative)
     if not file_path.exists():
         raise HTTPException(status_code=404, detail=f"文件不存在: {file_path}")
 
@@ -1453,7 +1460,7 @@ async def generate_video_prompt(request: VideoPromptRequest):
         raise HTTPException(status_code=400, detail="请上传图片（仅支持本地上传的图片）")
 
     relative = raw_url.split("/static/projects/", 1)[1]
-    image_path = Path(PROJECT_FILE_PATH) / relative
+    image_path = resolve_cache_path(relative)
     if not image_path.exists():
         raise HTTPException(status_code=404, detail=f"图片文件不存在: {image_path}")
 
@@ -1487,7 +1494,7 @@ async def generate_shot_video_prompt(request: ShotVideoPromptRequest):
         raw_url = url.split("?")[0]
         if not raw_url.startswith("/static/projects/"):
             raise HTTPException(status_code=400, detail="参考图必须是当前项目中的本地图片")
-        path = Path(PROJECT_FILE_PATH) / raw_url.removeprefix("/static/projects/")
+        path = resolve_cache_path(raw_url.removeprefix("/static/projects/"))
         if not path.exists():
             raise HTTPException(status_code=404, detail=f"参考图不存在: {path.name}")
         image_paths.append(str(path))
@@ -1524,7 +1531,7 @@ async def model_view_prompt(request: ModelViewPromptRequest):
     if "/static/projects/" not in raw_url:
         raise HTTPException(status_code=400, detail="请上传图片（仅支持本地上传的图片）")
     relative = raw_url.split("/static/projects/", 1)[1]
-    image_path = Path(PROJECT_FILE_PATH) / relative
+    image_path = resolve_cache_path(relative)
     if not image_path.exists():
         raise HTTPException(status_code=404, detail=f"图片文件不存在: {image_path}")
     llm_service = LLMVisionService()
@@ -1545,7 +1552,7 @@ async def concept_head_crop(request: ConceptHeadCropRequest):
     if "/static/projects/" not in raw_url:
         raise HTTPException(status_code=400, detail="仅支持应用内已保存的图片")
     relative = raw_url.split("/static/projects/", 1)[1]
-    image_path = Path(PROJECT_FILE_PATH) / relative
+    image_path = resolve_cache_path(relative)
     if not image_path.exists():
         raise HTTPException(status_code=404, detail=f"图片文件不存在: {image_path}")
     try:
@@ -1567,7 +1574,7 @@ async def refine_analyze(request: RefineAnalyzeRequest):
         raise HTTPException(status_code=400, detail="请上传图片（仅支持本地上传的图片）")
 
     relative = raw_url.split("/static/projects/", 1)[1]
-    image_path = Path(PROJECT_FILE_PATH) / relative
+    image_path = resolve_cache_path(relative)
     if not image_path.exists():
         raise HTTPException(status_code=404, detail=f"图片文件不存在: {image_path}")
 
@@ -1682,7 +1689,7 @@ async def scene_hdr(request: SceneHDRRequest):
         raise HTTPException(status_code=400, detail="请上传场景图（仅支持本地上传的图片）")
 
     relative = raw_url.split("/static/projects/", 1)[1]
-    scene_image_path = Path(PROJECT_FILE_PATH) / relative
+    scene_image_path = resolve_cache_path(relative)
     if not scene_image_path.exists():
         raise HTTPException(status_code=404, detail=f"场景图文件不存在: {scene_image_path}")
 
@@ -1786,9 +1793,9 @@ _STATIC_PREFIX = "/static/projects/"
 
 # 存放引用 uploads 文件的 JSON 目录（独立自由画布 + 镜头表内嵌画布 + concepts）
 _REF_JSON_DIRS = [
-    Path(PROJECT_FILE_PATH) / "_temp" / "freeCanvas",
-    Path(PROJECT_FILE_PATH) / "_temp" / "shotbreakdown",
-    Path(PROJECT_FILE_PATH) / "_temp" / "concepts",
+    Path(PROJECT_FILE_PATH) / "freeCanvas" / "jsons",
+    Path(PROJECT_FILE_PATH) / "shotBreakdown" / "jsons",
+    Path(PROJECT_FILE_PATH) / "shotBreakdown" / "jsons" / "concepts",
 ]
 
 
@@ -1807,7 +1814,11 @@ def _collect_referenced_rel_paths() -> set:
             except Exception:
                 continue
             for m in _re.finditer(r"/static/projects/([^\s\"',\]\}]+)", text):
-                referenced.add(m.group(1))
+                try:
+                    canonical_path = resolve_cache_path(m.group(1))
+                    referenced.add(canonical_path.relative_to(Path(PROJECT_FILE_PATH).resolve()).as_posix())
+                except ValueError:
+                    continue
     return referenced
 
 
@@ -1815,10 +1826,10 @@ def _collect_referenced_rel_paths() -> set:
 async def cleanup_uploads():
     """清理 uploads 目录中未被任何画布项目/镜头表引用的孤立文件。
 
-    只清理 generator_outputs/uploads/ 子目录，不影响生成结果目录。
+    只清理 generation/uploads/ 子目录，不影响生成结果目录。
     返回删除的文件数和释放的空间。
     """
-    upload_dir = OUTPUT_DIR / "uploads"
+    upload_dir = Path(PROJECT_FILE_PATH) / "generation" / "uploads" / "image"
     if not upload_dir.exists():
         return {"success": True, "deleted": 0, "freed_bytes": 0, "message": "uploads 目录不存在"}
 
@@ -1857,7 +1868,7 @@ async def cleanup_uploads():
 @router.get("/api/uploads/orphans")
 async def list_orphans():
     """列出 uploads 目录中未被引用的孤立文件（不删除，仅预览）。"""
-    upload_dir = OUTPUT_DIR / "uploads"
+    upload_dir = Path(PROJECT_FILE_PATH) / "generation" / "uploads" / "image"
     if not upload_dir.exists():
         return {"success": True, "orphans": [], "total_size_bytes": 0}
 

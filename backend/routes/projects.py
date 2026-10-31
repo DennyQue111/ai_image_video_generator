@@ -12,9 +12,9 @@ from constants import PROJECT_FILE_PATH
 logger = logging.getLogger(__name__)
 router = APIRouter()
 # 与镜头表、Concepts 分开，避免被误认为影片项目资料。
-FREE_CANVAS_DIR = Path(PROJECT_FILE_PATH) / "_temp" / "freeCanvas"
+FREE_CANVAS_DIR = Path(PROJECT_FILE_PATH) / "freeCanvas" / "jsons"
 FREE_CANVAS_DIR.mkdir(parents=True, exist_ok=True)
-EDITING_STUDIO_DIR = Path(PROJECT_FILE_PATH) / "_temp" / "editingStudio"
+EDITING_STUDIO_DIR = Path(PROJECT_FILE_PATH) / "editPanel" / "jsons"
 EDITING_STUDIO_DIR.mkdir(parents=True, exist_ok=True)
 
 

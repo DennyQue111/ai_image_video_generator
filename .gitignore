@@ -13,7 +13,7 @@ node_modules/
 dist/
 *.log
 
-outputs/
+caches/
 
 # IDE
 .trae/

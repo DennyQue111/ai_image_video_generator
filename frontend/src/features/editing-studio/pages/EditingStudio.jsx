@@ -72,6 +72,10 @@ export default function EditingStudio() {
     localStorage.setItem('ai-image-video-generator:editing-studio:current-project', response.data.project.name || name)
   }
 
+  const refreshProject = async (name) => {
+    await openProject(name)
+  }
+
   const deleteProject = async (name) => {
     await axios.delete(`/api/editing-projects/${encodeURIComponent(name)}`)
     loadProject({})
@@ -82,7 +86,7 @@ export default function EditingStudio() {
   return (
     <main className="editing-studio">
       <header className="editing-toolbar">
-        <EditingProjectBar currentName={currentProject} onNameChange={setCurrentProject} onSave={saveProject} onLoad={openProject} onDelete={deleteProject} frameRate={frameRate} onFrameRateChange={setProjectFrameRate} />
+        <EditingProjectBar currentName={currentProject} onNameChange={setCurrentProject} onSave={saveProject} onLoad={openProject} onDelete={deleteProject} onRefreshProject={refreshProject} frameRate={frameRate} onFrameRateChange={setProjectFrameRate} />
         <div className="editing-toolbar-actions">
           <button className="edit-tool-button" onClick={loadLibrary}><RefreshCw size={15} />刷新素材</button>
           <button className="edit-export-button" disabled={!clips.length} onClick={() => setExportOpen(true)}>导出视频</button>
