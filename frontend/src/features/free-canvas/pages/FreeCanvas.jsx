@@ -866,13 +866,21 @@ export default function FreeCanvas() {
   }
 
   // 图生视频：选中图片 → 生成视频 → 自动连线
-  const handleImageToVideo = async (prompt, duration = 5, aspect = '16:9', modelType = 'pruned', referenceElements = null) => {
-    const imgs = referenceElements?.length ? referenceElements : (selectedElements.length > 0 ? selectedElements : selectedElement ? [selectedElement] : [])
+  const handleImageToVideo = async (prompt, duration = 5, aspect = '16:9', workflowType = 'ref2va', referenceElements = null, keyframes = null) => {
+    const isFl2va = workflowType === 'fl2va'
+    const imgs = isFl2va
+      ? [keyframes?.firstFrame, keyframes?.lastFrame].filter(Boolean)
+      : (referenceElements?.length ? referenceElements : (selectedElements.length > 0 ? selectedElements : selectedElement ? [selectedElement] : []))
+    if (isFl2va && !keyframes?.firstFrame) {
+      alert('FL2VA 至少需要指定一张首帧图片')
+      return
+    }
     if (imgs.length === 0) return
-    if (imgs.length > 9) {
+    if (!isFl2va && imgs.length > 9) {
       alert('最多支持 9 张参考图，请减少选中数量')
       return
     }
+    if (workflowType === 'pika_ref2va' && duration > 8 && !confirm(`Pika H3 Flex ${duration}s 多参考生成在 12GB 显存上可能耗时较长或 OOM，是否继续？`)) return
     // 12GB 显存软警告：>8s 容易 OOM
     if (duration > 8 && !confirm(`视频时长 ${duration}s 在 12GB 显存上可能 OOM，是否继续？`)) {
       return
@@ -881,15 +889,21 @@ export default function FreeCanvas() {
     const [width, height] = aspect === '9:16' ? [768, 1344] : [1344, 768]
     setLoading(true)
     try {
-      const res = await axios.post('/api/image-to-video', {
+      const payload = {
         model: 'comfyui-minimax',
-        reference_images: imgs.map((el) => el.src),
         duration,
         prompt: prompt || '',
         width,
         height,
-        workflow_type: modelType,
-      })
+        workflow_type: workflowType,
+      }
+      if (isFl2va) {
+        payload.first_frame_image = keyframes.firstFrame.src
+        payload.last_frame_image = keyframes.lastFrame?.src || ''
+      } else {
+        payload.reference_images = imgs.map((el) => el.src)
+      }
+      const res = await axios.post('/api/image-to-video', payload)
       if (res.data.success && res.data.videos?.[0]) {
         const vid = res.data.videos[0]
         const vidUrl = vid.url || vid.local_url

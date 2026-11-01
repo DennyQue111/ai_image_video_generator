@@ -71,7 +71,7 @@ class ImageToVideoRequest(BaseModel):
     fps: int = 24
     width: int = 0
     height: int = 0
-    workflow_type: str = "int8"  # MiniMax H3 默认完整 int8 版；显式传 pruned 才使用截肢版
+    workflow_type: str = "ref2va"  # fl2va / ref2va / pika_ref2va
 
 class YoloSplitRequest(BaseModel):
     image: str = Field(..., description="待拆分图片 URL")
@@ -522,7 +522,7 @@ async def image_to_video(request: ImageToVideoRequest):
     """
     图生视频
     - comfyui-ltx: 调用 ComfyUI LTX 2.3 工作流（首帧图生视频）
-    - comfyui-minimax: 首帧+多参走 Ref2VA/AddGuide；首尾锁定单独走 FL2VA；纯多参走 Ref2VA
+    - comfyui-minimax: FL2VA 首尾帧、Ref2VA 多参考、Pika Ref2VA 多参考
     """
     logger.info("[API] /api/image-to-video called, model=%s, fps=%s, duration=%s, has_dialogue=%s",
                 request.model, request.fps, request.duration, bool(request.dialogue))

@@ -147,8 +147,10 @@ export default function RightPanel({
   const [modelViewFrontPrompt, setModelViewFrontPrompt] = useState(null)
   // 图生视频：分辨率选择（16:9 或 9:16）
   const [i2vAspect, setI2vAspect] = useState('16:9')
-  // 图生视频：模型版本选择（pruned 截肢版 | int8 完整版）
-  const [i2vModel, setI2vModel] = useState('pruned')
+  // 图生视频工作流选择
+  const [i2vWorkflow, setI2vWorkflow] = useState('ref2va')
+  const [i2vFirstFrameId, setI2vFirstFrameId] = useState('')
+  const [i2vLastFrameId, setI2vLastFrameId] = useState('')
   const [i2vSubTab, setI2vSubTab] = useState('preset')
   const [shotProjects, setShotProjects] = useState([])
   const [shotProjectId, setShotProjectId] = useState('')
@@ -207,10 +209,17 @@ export default function RightPanel({
     const imageIds = selectedElements.filter((item) => item.type === 'image').map((item) => item.id)
     setCharacterRefId((value) => imageIds.includes(value) ? value : (imageIds[0] || ''))
     setFrameRefId((value) => imageIds.includes(value) && value !== imageIds[0] ? value : (imageIds[1] || ''))
+    setI2vFirstFrameId((value) => imageIds.includes(value) ? value : (imageIds[0] || ''))
+    setI2vLastFrameId((value) => imageIds.includes(value) && value !== imageIds[0] ? value : (imageIds[1] || ''))
   }, [selectedElements])
 
   const multiCount = selectedElements.length
   const selectedImageElements = selectedElements.filter((item) => item.type === 'image')
+  const i2vImageOptions = selectedImageElements.length
+    ? selectedImageElements
+    : selectedElement?.type === 'image' ? [selectedElement] : []
+  const i2vFirstFrame = i2vImageOptions.find((item) => item.id === i2vFirstFrameId) || i2vImageOptions[0] || null
+  const i2vLastFrame = i2vImageOptions.find((item) => item.id === i2vLastFrameId && item.id !== i2vFirstFrame?.id) || null
   const characterRef = selectedImageElements.find((item) => item.id === characterRefId)
   const frameRef = selectedImageElements.find((item) => item.id === frameRefId)
 
@@ -834,23 +843,51 @@ export default function RightPanel({
             {loading ? '生成中...' : 'Qwen3 生成提示词'}
           </button>
 
-          <div className="panel-label" style={{ marginTop: 10 }}>模型版本</div>
-          <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+          <div className="panel-label" style={{ marginTop: 10 }}>工作流</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 6, marginTop: 4 }}>
             <button
-              className={`canvas-btn ${i2vModel === 'pruned' ? 'canvas-btn-primary' : ''}`}
-              style={{ flex: 1, justifyContent: 'center', fontSize: 12 }}
-              onClick={() => setI2vModel('pruned')}
+              className={`canvas-btn ${i2vWorkflow === 'fl2va' ? 'canvas-btn-primary' : ''}`}
+              style={{ justifyContent: 'center', fontSize: 11, paddingInline: 4 }}
+              onClick={() => setI2vWorkflow('fl2va')}
             >
-              截肢版
+              FL2VA 首尾帧
             </button>
             <button
-              className={`canvas-btn ${i2vModel === 'int8' ? 'canvas-btn-primary' : ''}`}
-              style={{ flex: 1, justifyContent: 'center', fontSize: 12 }}
-              onClick={() => setI2vModel('int8')}
+              className={`canvas-btn ${i2vWorkflow === 'ref2va' ? 'canvas-btn-primary' : ''}`}
+              style={{ justifyContent: 'center', fontSize: 11, paddingInline: 4 }}
+              onClick={() => setI2vWorkflow('ref2va')}
             >
-              INT8 完整版
+              Ref2VA 多参考
+            </button>
+            <button
+              className={`canvas-btn ${i2vWorkflow === 'pika_ref2va' ? 'canvas-btn-primary' : ''}`}
+              style={{ justifyContent: 'center', fontSize: 11, paddingInline: 4 }}
+              onClick={() => setI2vWorkflow('pika_ref2va')}
+            >
+              Pika 多参考
             </button>
           </div>
+          {i2vWorkflow === 'fl2va' ? (
+            <div style={{ marginTop: 6 }}>
+              <div className="panel-label">首帧</div>
+              <select className="canvas-input" value={i2vFirstFrame?.id || ''} onChange={(e) => setI2vFirstFrameId(e.target.value)}>
+                {i2vImageOptions.length === 0 && <option value="">先在画布选中图片</option>}
+                {i2vImageOptions.map((image, index) => <option key={image.id} value={image.id}>{image.name || `图片 ${index + 1}`}</option>)}
+              </select>
+              <div className="panel-label" style={{ marginTop: 6 }}>尾帧（可选）</div>
+              <select className="canvas-input" value={i2vLastFrame?.id || ''} onChange={(e) => setI2vLastFrameId(e.target.value)}>
+                <option value="">不指定尾帧</option>
+                {i2vImageOptions.filter((image) => image.id !== i2vFirstFrame?.id).map((image, index) => <option key={image.id} value={image.id}>{image.name || `图片 ${index + 1}`}</option>)}
+              </select>
+              <div style={{ color: '#888', fontSize: 11, marginTop: 4 }}>FL2VA 使用首帧和可选尾帧控制画面，不使用多参考图。</div>
+            </div>
+          ) : (
+            <div style={{ color: '#888', fontSize: 11, marginTop: 5, lineHeight: 1.45 }}>
+              {i2vWorkflow === 'pika_ref2va'
+                ? 'Pika H3 Flex：Ref2VA 原生条件节点 + Pika LoRA + LCM 六步采样。'
+                : 'Ref2VA：多参考图 + T8 多速率采样工作流。'}
+            </div>
+          )}
 
           <div className="panel-label" style={{ marginTop: 10 }}>分辨率</div>
           <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
@@ -905,10 +942,17 @@ export default function RightPanel({
           <button
             className="canvas-btn canvas-btn-success"
             style={{ width: '100%', marginTop: 8, justifyContent: 'center' }}
-            disabled={loading}
-            onClick={() => onImageToVideo(i2vPrompt, i2vDuration, i2vAspect, i2vModel)}
+            disabled={loading || (i2vWorkflow === 'fl2va' ? !i2vFirstFrame : i2vImageOptions.length === 0)}
+            onClick={() => onImageToVideo(
+              i2vPrompt,
+              i2vDuration,
+              i2vAspect,
+              i2vWorkflow,
+              i2vImageOptions,
+              i2vWorkflow === 'fl2va' ? { firstFrame: i2vFirstFrame, lastFrame: i2vLastFrame } : null,
+            )}
           >
-            <Video size={16} /> {loading ? '生成中...' : (multiCount > 1 ? `多图生视频（${multiCount} 张）` : '图生视频')}
+            <Video size={16} /> {loading ? '生成中...' : i2vWorkflow === 'fl2va' ? 'FL2VA 首尾帧生成' : (i2vImageOptions.length > 1 ? `多参考图生视频（${i2vImageOptions.length} 张）` : '参考图生视频')}
           </button>
           </>}
 

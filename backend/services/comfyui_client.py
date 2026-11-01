@@ -4053,7 +4053,7 @@ class ComfyUIClient:
 
     # ============ MiniMax H3 图生视频 ============
 
-    # Ref2VA 流程的节点 ID（工作流中的第 3 个子流程，支持多图参考）
+    # T8 共用视频图节点 ID；FL2VA 与 Ref2VA 由任务模式和 checkpoint 区分
     _MINIMAX_FLOW3_IDS = {
         339, 340, 343, 345, 346, 347, 348, 349, 350, 351,
         352, 353, 354, 355, 356, 357, 358, 360, 361, 362,
@@ -4082,7 +4082,7 @@ class ComfyUIClient:
         seed: int = -1,
         save_prefix: str = "video/MiniMax_H3",
         timeout: int = 7200,  # 2小时（12GB 显存动态加载 + 推理需要 60+ 分钟）
-        workflow_type: str = "int8",  # 默认完整 int8 版；显式传 pruned 才使用截肢版
+        workflow_type: str = "ref2va",  # fl2va / ref2va / pika_ref2va
     ) -> Dict[str, Any]:
         """
         使用 MiniMax H3 工作流生成视频。首帧与多参考图并用时，将首帧作为 Picture 参考并通过官方 Add Guide 锚定 frame 0。
@@ -4102,6 +4102,22 @@ class ComfyUIClient:
         """
         if not reference_image_urls and not first_frame_image_url and not last_frame_image_url:
             raise ValueError("至少需要首帧图片、尾帧图片或 1 张参考图片")
+        # Older callers used int8/pruned as weight-format selectors. Resolve those
+        # names to an actual task family based on the supplied inputs.
+        model_variant = "int8"
+        if workflow_type in {"int8", "pruned"}:
+            legacy_variant = workflow_type
+            workflow_type = "ref2va" if reference_image_urls else "fl2va"
+            if legacy_variant == "pruned" and workflow_type == "fl2va":
+                model_variant = "pruned"
+        if workflow_type not in {"fl2va", "ref2va", "pika_ref2va"}:
+            raise ValueError(f"不支持的 MiniMax H3 工作流类型: {workflow_type}")
+        if workflow_type == "fl2va" and reference_image_urls:
+            raise ValueError("FL2VA 首尾帧工作流不接收多参考图；请改用 Ref2VA")
+        if workflow_type in {"ref2va", "pika_ref2va"} and not reference_image_urls:
+            raise ValueError(f"{workflow_type} 工作流至少需要一张参考图")
+        if workflow_type == "pika_ref2va" and (first_frame_image_url or last_frame_image_url):
+            raise ValueError("Pika H3 Flex Ref2VA 当前仅支持多参考图模式，不支持首帧/尾帧锚定")
         if last_frame_image_url and reference_image_urls:
             raise ValueError("MiniMax H3 首尾帧锁定与多参考图必须分开使用")
         max_reference_images = 8 if first_frame_image_url and reference_image_urls else 9
@@ -4117,6 +4133,12 @@ class ComfyUIClient:
         )
         if use_ref2va_first_frame_guide:
             task_type = "Ref2VA"
+        elif workflow_type == "fl2va" and first_frame_image_url and last_frame_image_url:
+            task_type = "FL2VA"
+        elif workflow_type == "fl2va" and first_frame_image_url:
+            task_type = "I2VA"
+        elif workflow_type == "fl2va" and last_frame_image_url:
+            task_type = "L2VA"
         elif first_frame_image_url and last_frame_image_url:
             task_type = "FL2VA"
         elif first_frame_image_url:
@@ -4153,9 +4175,23 @@ class ComfyUIClient:
             picture_index = i + (1 if use_ref2va_first_frame_guide else 0)
             logger.info("[ComfyUI] MiniMax H3 ref image %d uploaded: %s", picture_index + 1, result["name"])
 
+        # Pika Flex is its own graph and must not inherit the legacy Turbo sampler.
+        if workflow_type == "pika_ref2va":
+            workflow = self._build_minimax_h3_pika_ref2va_workflow(
+                prompt=prompt,
+                reference_filenames=uploaded_filenames,
+                width=width,
+                height=height,
+                duration_seconds=duration_seconds,
+                fps=fps,
+                seed=seed,
+                save_prefix=save_prefix,
+            )
+            return await self._queue_minimax_h3_workflow(workflow, save_prefix, timeout)
+
         # 2. 加载工作流 JSON 并筛选 Ref2VA 流程
         config_dir = Path(__file__).parent.parent / "config"
-        workflow_file = "minimax_h3_int8_workflow.json" if workflow_type == "int8" else "minimax_h3_pruned_workflow.json"
+        workflow_file = "minimax_h3_pruned_workflow.json" if model_variant == "pruned" else "minimax_h3_t8_multirate_workflow.json"
         workflow_path = config_dir / workflow_file
         if not workflow_path.exists():
             raise Exception(f"MiniMax H3 workflow not found: {workflow_path}")
@@ -4164,7 +4200,17 @@ class ComfyUIClient:
         with open(workflow_path, "r", encoding="utf-8") as f:
             workflow_json = json.load(f)
 
-        # 筛选节点：只保留 Ref2VA 流程的节点
+        # The T8 graph is shared by FL2VA keyframes and standard Ref2VA
+        # references; the task family must still load its matching checkpoint.
+        model_node = next((node for node in workflow_json["nodes"] if node.get("id") == 358), None)
+        if model_node and model_variant != "pruned":
+            model_node["widgets_values"][0] = (
+                "minimax_h3_fl2va_int8_convrot.safetensors"
+                if workflow_type == "fl2va"
+                else "minimax_h3_ref2va_int8_convrot.safetensors"
+            )
+
+        # 筛选 T8 共用图：任务类型和模型权重由 FL2VA / Ref2VA 分支选择
         flow_ids = self._MINIMAX_FLOW3_IDS
         workflow_json["nodes"] = [n for n in workflow_json["nodes"] if n["id"] in flow_ids]
         workflow_json["links"] = [
@@ -4321,6 +4367,79 @@ class ComfyUIClient:
             comfyui_output_dir=self.comfyui_output_dir,
             timeout=timeout,
         )
+
+    def _build_minimax_h3_pika_ref2va_workflow(
+        self,
+        prompt: str,
+        reference_filenames: List[str],
+        width: int,
+        height: int,
+        duration_seconds: float,
+        fps: int,
+        seed: int,
+        save_prefix: str,
+    ) -> Dict[str, Any]:
+        """Build an isolated Pika H3 Flex Ref2VA graph, without Turbo LoRA/sampler nodes."""
+        if not reference_filenames:
+            raise ValueError("Pika H3 Flex Ref2VA 至少需要一张参考图")
+        if len(reference_filenames) > 9:
+            raise ValueError("MiniMax H3 最多支持 9 张参考图")
+
+        # Keep this workflow independent from the legacy Turbo + custom multi-rate graph.
+        # Pika's official recipe uses LCM, CFG 1, and six explicit sigma values.
+        frames = max(17, round(duration_seconds * fps))
+        frames += (5 - frames % 17) % 17
+        normalized_prompt = self._normalize_minimax_prompt_tags(prompt).strip()
+        # The native H3 reference node uses explicit ordinal tags to bind each
+        # prompt mention to its corresponding reference image.
+        for image_index in range(1, len(reference_filenames) + 1):
+            picture_tag = f"<Picture {image_index}>"
+            if picture_tag.lower() not in normalized_prompt.lower():
+                normalized_prompt = f"{picture_tag} as the visual reference. {normalized_prompt}".strip()
+
+        workflow: Dict[str, Any] = {
+            "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "minimax_h3_ref2va_int8_convrot.safetensors", "weight_dtype": "default"}},
+            "2": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["1", 0], "lora_name": "pika_h3_flex_ref2va_v1_bf16.safetensors", "strength_model": 1.0}},
+            # This utility node's seed must be non-negative too; the generation
+            # request uses -1 as its random-seed sentinel.
+            "3": {"class_type": "ReservedVRAMSetter", "inputs": {"anything": ["2", 0], "reserved": 1, "mode": "manual", "seed": max(0, int(seed)), "auto_max_reserved": 0, "clean_gpu_before": True}},
+            "4": {"class_type": "CLIPLoader", "inputs": {"clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", "type": "minimax", "device": "default"}},
+            "5": {"class_type": "VAELoader", "inputs": {"vae_name": "minimax_h3_video_vae_int8_convrot.safetensors"}},
+            "6": {"class_type": "VAELoader", "inputs": {"vae_name": "minimax_h3_audio_vae_fp32.safetensors"}},
+            "7": {"class_type": "PrimitiveStringMultiline", "inputs": {"value": normalized_prompt}},
+            "8": {"class_type": "PrimitiveFloat", "inputs": {"value": duration_seconds}},
+            "9": {"class_type": "ComfyMathExpression", "inputs": {"expression": f"max(5, round(a * {fps})) + (5 - (max(5, round(a * {fps})) % 17)) % 17", "values.a": ["8", 0]}},
+            # Match the official Pika Ref2VA graph: native conditioning and
+            # separate standard video/audio VAE decoding paths.
+            "10": {"class_type": "MiniMaxH3ReferenceToVideo", "inputs": {
+                "clip": ["4", 0], "vae": ["5", 0], "audio_vae": ["6", 0],
+                "prompt": ["7", 0], "width": width, "height": height, "length": frames,
+                "ref_image_size": "max",
+            }},
+            "11": {"class_type": "RandomNoise", "inputs": {"noise_seed": max(0, int(seed))}},
+            "12": {"class_type": "BasicGuider", "inputs": {"model": ["3", 0], "conditioning": ["10", 0]}},
+            "13": {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "lcm"}},
+            "14": {"class_type": "ManualSigmas", "inputs": {"sigmas": "1.0, 0.972973, 0.923077, 0.8, 0.571429, 0.333333, 0.0"}},
+            "15": {"class_type": "SamplerCustomAdvanced", "inputs": {"noise": ["11", 0], "guider": ["12", 0], "sampler": ["13", 0], "sigmas": ["14", 0], "latent_image": ["10", 1]}},
+            "16": {"class_type": "VAEDecode", "inputs": {"samples": ["15", 0], "vae": ["5", 0]}},
+            "17": {"class_type": "VAEDecodeAudio", "inputs": {"samples": ["15", 0], "vae": ["6", 0]}},
+            "18": {"class_type": "VHS_VideoCombine", "inputs": {"images": ["16", 0], "audio": ["17", 0], "frame_rate": fps, "loop_count": 0, "filename_prefix": save_prefix, "format": "video/h264-mp4", "pix_fmt": "yuv420p", "crf": 19, "save_metadata": True, "trim_to_audio": False, "pingpong": False, "save_output": True}},
+        }
+        for i, filename in enumerate(reference_filenames):
+            node_id = str(20 + i)
+            workflow[node_id] = {"class_type": "LoadImage", "inputs": {"image": filename}}
+            workflow["10"]["inputs"][f"ref_images.ref_image_{i}"] = [node_id, 0]
+        return workflow
+
+    async def _queue_minimax_h3_workflow(self, workflow: Dict[str, Any], save_prefix: str, timeout: int) -> Dict[str, Any]:
+        """Queue an API-format MiniMax workflow and wait for its output."""
+        async with aiohttp.ClientSession() as session:
+            async with session.post(f"{self.base_url}/prompt", json={"prompt": workflow, "client_id": self.client_id}) as resp:
+                if resp.status != 200:
+                    raise Exception(f"Failed to queue MiniMax H3 Pika workflow: {await resp.text()}")
+                prompt_id = (await resp.json())["prompt_id"]
+        logger.info("[ComfyUI] MiniMax H3 Pika workflow queued, prompt_id=%s", prompt_id)
+        return await self._wait_for_ltx_video_completion(prompt_id, save_prefix=save_prefix, comfyui_output_dir=self.comfyui_output_dir, timeout=timeout)
 
     def _build_seedvr2_upscale_workflow(
         self,
