@@ -21,10 +21,10 @@ export default function EditingStudio() {
   const [currentProject, setCurrentProject] = useState(() => localStorage.getItem('ai-image-video-generator:editing-studio:current-project') || '')
   const [exportOpen, setExportOpen] = useState(false)
   const {
-    library, clips, tracks, addTrack, removeTrack, selected, selectedId, playhead, setPlayhead, playing, setPlaying,
+    library, clips, tracks, addTrack, removeTrack, selected, selectedId, selectedIds, playhead, setPlayhead, playing, setPlaying,
     frameRate, setProjectFrameRate,
     libraryError, videoRef, activeInfo, totalDuration, loadLibrary, addAsset,
-    addLocalFiles, updateClip, selectClip, removeSelected, splitSelected, moveClip, trimClip, undo, canUndo, loadProject,
+    addLocalFiles, updateClip, selectClip, selectClips, removeSelected, splitSelected, moveClip, trimClip, undo, canUndo, loadProject,
     handleMetadata, onVideoTime, onVideoEnded,
   } = timeline
 
@@ -142,10 +142,12 @@ export default function EditingStudio() {
       <TimelinePanel
         clips={clips}
         selectedId={selectedId}
+        selectedIds={selectedIds}
         activeClipId={activeInfo?.clip?.id}
         playhead={playhead}
         totalDuration={totalDuration}
         onSelectClip={selectClip}
+        onSelectClips={selectClips}
         onClearSelection={() => selectClip(null)}
         onSetPlayhead={(time) => { setPlaying(false); setPlayhead(time) }}
         onMoveClip={moveClip}

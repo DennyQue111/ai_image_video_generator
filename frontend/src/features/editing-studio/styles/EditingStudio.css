@@ -668,6 +668,13 @@
   min-height: 0;
   overflow: auto;
 }
+.timeline-selection-marquee {
+  position: fixed;
+  z-index: 20;
+  border: 1px solid #60a5fa;
+  background: #3b82f633;
+  pointer-events: none;
+}
 .timeline-row {
   display: flex;
   align-items: stretch;
