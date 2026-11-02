@@ -10,6 +10,22 @@ import ExportDialog from '../components/ExportDialog'
 import { useEditingTimeline } from '../hooks/useEditingTimeline'
 import '../styles/EditingStudio.css'
 
+function serializeClipsAsFrames(clips, projectFps) {
+  const sourceFpsByAsset = new Map(clips.filter((clip) => clip.type === 'video' && clip.assetId && Number(clip.sourceFrameRate) > 0).map((clip) => [clip.assetId, Number(clip.sourceFrameRate)]))
+  return clips.map((clip) => {
+    const sourceFps = Number(clip.sourceFrameRate) > 0 ? Number(clip.sourceFrameRate) : sourceFpsByAsset.get(clip.assetId) || projectFps
+    const { timelineStart, start, end, sourceDuration, ...metadata } = clip
+    return {
+      ...metadata,
+      timelineStartFrame: Math.round((Number(timelineStart) || 0) * projectFps),
+      sourceStartFrame: Math.round((Number(start) || 0) * sourceFps),
+      sourceEndFrame: Math.round((Number(end) || 0) * sourceFps),
+      ...(Number.isFinite(sourceDuration) ? { sourceDurationFrames: Math.round(sourceDuration * sourceFps) } : {}),
+      sourceFrameRate: sourceFps,
+    }
+  })
+}
+
 export default function EditingStudio() {
   const timeline = useEditingTimeline()
   const [splitPreview, setSplitPreview] = useState(false)
@@ -54,11 +70,20 @@ export default function EditingStudio() {
   }, [splitSelected, removeSelected, selected, undo, canUndo])
 
   const saveProject = async (name) => {
+    const projectFps = Number(frameRate) > 0 ? Number(frameRate) : 24
+    const savedClips = await Promise.all(clips.filter((clip) => !clip.temporary).map(async (clip) => {
+      if (clip.type !== 'video' || !clip.assetId || Number(clip.sourceFrameRate) > 0) return clip
+      try {
+        const result = await axios.get('/api/editing-media/frame-rate', { params: { asset_id: clip.assetId } })
+        return Number(result.data.fps) > 0 ? { ...clip, sourceFrameRate: Number(result.data.fps) } : clip
+      } catch { return clip }
+    }))
     const response = await axios.post('/api/editing-projects/save', {
       name,
-      clips: clips.filter((clip) => !clip.temporary),
+      clips: serializeClipsAsFrames(savedClips, projectFps),
       tracks,
-      frame_rate: frameRate,
+      frame_rate: projectFps,
+      timebase: 'frames',
     })
     setCurrentProject(response.data.name)
     localStorage.setItem('ai-image-video-generator:editing-studio:current-project', response.data.name)

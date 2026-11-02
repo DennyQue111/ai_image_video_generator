@@ -75,7 +75,19 @@ export function useEditingTimeline() {
 
   const loadProject = (project = {}) => {
     const nextTracks = Array.isArray(project.tracks) && project.tracks.length ? project.tracks : DEFAULT_TRACKS
-    setClips(normalizeClips(project.clips || [], nextTracks))
+    const projectFps = Number(project.frame_rate) > 0 ? Number(project.frame_rate) : 24
+    const restoredClips = (project.clips || []).map((clip) => {
+      if (!Number.isFinite(clip.timelineStartFrame)) return clip
+      const sourceFps = Number(clip.sourceFrameRate) > 0 ? Number(clip.sourceFrameRate) : projectFps
+      return {
+        ...clip,
+        timelineStart: clip.timelineStartFrame / projectFps,
+        start: Number.isFinite(clip.sourceStartFrame) ? clip.sourceStartFrame / sourceFps : (clip.start || 0),
+        end: Number.isFinite(clip.sourceEndFrame) ? clip.sourceEndFrame / sourceFps : (clip.end || 0),
+        sourceDuration: Number.isFinite(clip.sourceDurationFrames) ? clip.sourceDurationFrames / sourceFps : clip.sourceDuration,
+      }
+    })
+    setClips(normalizeClips(restoredClips, nextTracks))
     setTracks(nextTracks)
     setFrameRate(Number(project.frame_rate) > 0 ? Number(project.frame_rate) : null)
     setSelectedId(null)
@@ -125,6 +137,17 @@ export function useEditingTimeline() {
   }
 
   useEffect(() => { loadLibrary() }, [])
+
+  useEffect(() => {
+    const pending = [...new Map(clips.filter((clip) => clip.type === 'video' && clip.assetId && !clip.sourceFrameRate).map((clip) => [clip.assetId, clip])).values()]
+    pending.forEach((clip) => {
+      axios.get('/api/editing-media/frame-rate', { params: { asset_id: clip.assetId } })
+        .then((response) => {
+          const fps = Number(response.data.fps)
+          if (fps > 0) setClips((items) => items.map((item) => item.assetId === clip.assetId && item.type === 'video' ? { ...item, sourceFrameRate: fps } : item))
+        }).catch(() => {})
+    })
+  }, [clips])
 
   const addAsset = (asset) => {
     rememberUndo()

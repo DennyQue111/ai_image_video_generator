@@ -207,6 +207,20 @@ async def get_editing_media_frame_rate(asset_id: str):
     ffprobe = shutil.which("ffprobe")
     if not ffprobe:
         return {"success": True, "fps": None}
+    try:
+        result = subprocess.run(
+            [ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=avg_frame_rate,r_frame_rate", "-of", "json", str(media_path)],
+            capture_output=True, text=True, timeout=15, check=False,
+        )
+        streams = json.loads(result.stdout).get("streams", []) if result.returncode == 0 else []
+        if not streams:
+            return {"success": True, "fps": None}
+        raw_rate = streams[0].get("avg_frame_rate") or streams[0].get("r_frame_rate")
+        rate = float(Fraction(raw_rate)) if raw_rate and raw_rate != "0/0" else None
+        return {"success": True, "fps": rate if rate and rate > 0 else None}
+    except Exception as exc:
+        logger.warning("Unable to read editing media frame rate for %s: %s", asset_id, exc)
+        return {"success": True, "fps": None}
 
 
 @router.post("/api/editing-exports")

@@ -37,6 +37,7 @@ class SaveEditingProjectRequest(BaseModel):
     clips: list = Field(default_factory=list)
     tracks: list = Field(default_factory=list)
     frame_rate: float | None = None
+    timebase: str = "seconds"
 
 
 def _editing_path(name: str) -> Path:
@@ -56,7 +57,7 @@ async def list_editing_projects():
 @router.post("/api/editing-projects/save")
 async def save_editing_project(request: SaveEditingProjectRequest):
     name = _safe_name(request.name)
-    data = {"name": name, "version": 1, "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    data = {"name": name, "version": 2 if request.timebase == "frames" else 1, "timebase": request.timebase, "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "clips": request.clips, "tracks": request.tracks, "frame_rate": request.frame_rate}
     _editing_path(name).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     return {"success": True, "name": name, "filename": f"{name}.json", "updated_at": data["saved_at"]}
