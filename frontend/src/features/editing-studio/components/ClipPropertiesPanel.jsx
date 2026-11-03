@@ -1,9 +1,9 @@
 import { Film, Image as ImageIcon, Palette } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import axios from 'axios'
-import { formatTime } from '../utils/format'
+import { getSourceFrameRate } from '../utils/frameRateCache'
+import { formatTimecode } from '../utils/format'
 
-export default function ClipPropertiesPanel({ clip, onUpdate, onFrameRateChange }) {
+export default function ClipPropertiesPanel({ clip, onUpdate, onFrameRateChange, projectFrameRate = 24 }) {
   const [activeTab, setActiveTab] = useState('clip')
   const [frameRate, setFrameRate] = useState(null)
   const [frameRateState, setFrameRateState] = useState('idle')
@@ -17,22 +17,21 @@ export default function ClipPropertiesPanel({ clip, onUpdate, onFrameRateChange 
     let cancelled = false
     setFrameRate(null)
     setFrameRateState('loading')
-    axios.get('/api/editing-media/frame-rate', { params: { asset_id: clip.assetId } })
-      .then((response) => {
-        if (cancelled) return
-        setFrameRate(response.data.fps)
-        setFrameRateState(response.data.fps ? 'ready' : 'unavailable')
-        if (response.data.fps) onFrameRateChange?.(clip.id, response.data.fps)
-      })
-      .catch(() => { if (!cancelled) setFrameRateState('unavailable') })
+    getSourceFrameRate(clip.assetId).then((fps) => {
+      if (cancelled) return
+      setFrameRate(fps)
+      setFrameRateState(fps ? 'ready' : 'unavailable')
+      if (fps) onFrameRateChange?.(clip.id, fps)
+    })
     return () => { cancelled = true }
-  }, [clip?.id, clip?.type, clip?.assetId, onFrameRateChange])
+  }, [clip?.id, clip?.type, clip?.assetId])
 
   const frameRateLabel = frameRateState === 'loading'
     ? '读取中…'
     : frameRateState === 'ready'
       ? `${Number.isInteger(frameRate) ? frameRate : frameRate.toFixed(2)} fps`
       : '不可读取'
+  const durationFrameRate = clip?.type === 'video' ? (frameRate || clip.sourceFrameRate || projectFrameRate) : projectFrameRate
   return (
     <aside className="editing-properties">
       <div className="edit-property-tabs" role="tablist" aria-label="片段属性页签">
@@ -42,8 +41,7 @@ export default function ClipPropertiesPanel({ clip, onUpdate, onFrameRateChange 
       {!clip ? <p className="edit-empty">选择时间线中的片段查看属性或调整色彩。</p> : activeTab === 'clip' ? <div className="edit-property-content">
         <div className="edit-selected-name">{clip.type === 'video' ? <Film size={15} /> : <ImageIcon size={15} />}{clip.name}</div>
         <div className="edit-clip-detail"><span>素材类型</span><strong>{clip.type === 'video' ? '视频' : '图片'}</strong></div>
-        <div className="edit-clip-detail"><span>时间线位置</span><strong>{formatTime(clip.timelineStart || 0)}</strong></div>
-        <div className="edit-clip-detail"><span>片段时长</span><strong>{formatTime(clip.end - clip.start)}</strong></div>
+        <div className="edit-clip-detail"><span>片段时长</span><strong>{formatTimecode(clip.end - clip.start, durationFrameRate)}</strong></div>
         {clip.type === 'video' && <div className="edit-clip-detail"><span>素材帧速率</span><strong>{frameRateLabel}</strong></div>}
       </div> : <div className="edit-property-content">
         <div className="edit-grade-title"><Palette size={14} />基础调色 · 预览</div>

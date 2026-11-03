@@ -17,7 +17,7 @@ function normalizeClips(clips = [], tracks = DEFAULT_TRACKS) {
   })
   const audioTrack = tracks.find((track) => track.type === 'audio')
   const linkedIds = new Set(normalized.map((clip) => clip.linkedClipId))
-  return [...normalized, ...normalized.filter((clip) => clip.type === 'video' && !linkedIds.has(clip.id)).map((clip) => ({
+  return [...normalized, ...normalized.filter((clip) => clip.type === 'video' && !clip.audioSeparated && !linkedIds.has(clip.id)).map((clip) => ({
     ...clip, id: `${clip.id}-audio`, type: 'audio', trackId: audioTrack?.id || 'audio-1', linkedClipId: clip.id,
     name: `${clip.name} · 音频`, grade: undefined,
   }))]
@@ -101,7 +101,9 @@ export function useEditingTimeline() {
   const selected = clips.find((clip) => clip.id === selectedId) || null
   const totalDuration = clips.reduce((end, clip) => Math.max(end, clip.timelineStart + Math.max(0, clip.end - clip.start)), 0)
   const activeInfo = useMemo(() => {
-    const sorted = [...clips].sort((a, b) => a.timelineStart - b.timelineStart)
+    // The preview displays the picture track. Detached audio can overlap it in
+    // time, but must never take over the visual preview selection.
+    const sorted = clips.filter((item) => item.type !== 'audio').sort((a, b) => a.timelineStart - b.timelineStart)
     const clip = sorted.find((item) => playhead >= item.timelineStart && playhead < item.timelineStart + (item.end - item.start))
       || (playhead >= totalDuration && sorted.at(-1))
     if (!clip) return null
@@ -138,16 +140,6 @@ export function useEditingTimeline() {
 
   useEffect(() => { loadLibrary() }, [])
 
-  useEffect(() => {
-    const pending = [...new Map(clips.filter((clip) => clip.type === 'video' && clip.assetId && !clip.sourceFrameRate).map((clip) => [clip.assetId, clip])).values()]
-    pending.forEach((clip) => {
-      axios.get('/api/editing-media/frame-rate', { params: { asset_id: clip.assetId } })
-        .then((response) => {
-          const fps = Number(response.data.fps)
-          if (fps > 0) setClips((items) => items.map((item) => item.assetId === clip.assetId && item.type === 'video' ? { ...item, sourceFrameRate: fps } : item))
-        }).catch(() => {})
-    })
-  }, [clips])
 
   const addAsset = (asset) => {
     rememberUndo()
@@ -255,13 +247,33 @@ export function useEditingTimeline() {
     setSelectedId(next.at(-1) || null)
   }
 
+  const separateAudio = (id) => {
+    const selectedClip = clips.find((clip) => clip.id === id)
+    if (!selectedClip) return
+    const video = selectedClip.type === 'audio'
+      ? clips.find((clip) => clip.id === selectedClip.linkedClipId)
+      : selectedClip
+    if (!video || video.type !== 'video') return
+    const audio = clips.find((clip) => clip.linkedClipId === video.id)
+    if (!audio) return
+    rememberUndo()
+    setClips((items) => items.map((clip) => {
+      if (clip.id === video.id) return { ...clip, audioSeparated: true }
+      if (clip.id === audio.id) {
+        const { linkedClipId, ...independentAudio } = clip
+        return independentAudio
+      }
+      return clip
+    }))
+  }
+
   const trimClip = (id, edge, requestedDelta) => {
     const clip = clips.find((item) => item.id === id)
     if (!clip) return
     const frame = 1 / (frameRate || 24)
     const delta = Math.round(requestedDelta / frame) * frame
     const linkedId = clip.type === 'audio' ? clip.linkedClipId : clip.id
-    const pair = clips.filter((item) => item.id === linkedId || item.linkedClipId === linkedId)
+    const pair = linkedId ? clips.filter((item) => item.id === linkedId || item.linkedClipId === linkedId) : [clip]
     const minStart = Math.max(0, ...pair.map((item) => item.start - item.timelineStart))
     const nextStart = edge === 'left' ? Math.max(0, clip.start + Math.max(-clip.timelineStart, -clip.start, -minStart, delta)) : clip.start
     const appliedDelta = nextStart - clip.start
@@ -283,7 +295,7 @@ export function useEditingTimeline() {
     rememberUndo()
     const index = clips.findIndex((clip) => clip.id === selected.id)
     const linkedId = selected.type === 'audio' ? selected.linkedClipId : selected.id
-    const removeIds = selected.type === 'audio' ? new Set([selected.id, linkedId]) : new Set([selected.id, ...clips.filter((clip) => clip.linkedClipId === linkedId).map((clip) => clip.id)])
+    const removeIds = selected.type === 'audio' ? new Set([selected.id, ...(linkedId ? [linkedId] : [])]) : new Set([selected.id, ...clips.filter((clip) => clip.linkedClipId === linkedId).map((clip) => clip.id)])
     setClips((items) => items.filter((clip) => !removeIds.has(clip.id)))
     const remaining = clips.filter((clip) => !removeIds.has(clip.id))
     const nextSelection = selectedIds.filter((id) => !removeIds.has(id))
@@ -293,6 +305,20 @@ export function useEditingTimeline() {
   }
 
   const splitSelected = () => {
+    if (selected?.type === 'audio' && !selected.linkedClipId) {
+      const offset = playhead - selected.timelineStart
+      const cutAt = selected.start + offset
+      const frame = 1 / (frameRate || 24)
+      if (cutAt <= selected.start + frame / 2 || cutAt >= selected.end - frame / 2) return
+      rememberUndo()
+      const suffix = Date.now()
+      const left = { ...selected, id: `${selected.id}-a-${suffix}`, end: cutAt, name: `${selected.name} · A` }
+      const right = { ...selected, id: `${selected.id}-b-${suffix}`, start: cutAt, timelineStart: playhead, name: `${selected.name} · B` }
+      setClips((items) => [...items.filter((clip) => clip.id !== selected.id), left, right])
+      setSelectedId(right.id)
+      setSelectedIds([right.id])
+      return
+    }
     const videoSelected = selected?.type === 'audio' ? clips.find((clip) => clip.id === selected.linkedClipId) : selected
     if (!videoSelected || videoSelected.type !== 'video') return
     const source = videoSelected
@@ -422,7 +448,7 @@ export function useEditingTimeline() {
   return {
     library, clips, setClips, tracks, addTrack, removeTrack, selected, selectedId, selectedIds, playhead, setPlayhead, playing, setPlaying, frameRate, setProjectFrameRate,
     libraryError, videoRef, activeInfo, totalDuration, loadLibrary, addAsset,
-    addLocalFiles, updateClip, selectClip, selectClips, removeSelected, splitSelected, moveClip, trimClip, undo, canUndo: undoCount > 0, loadProject,
+    addLocalFiles, updateClip, selectClip, selectClips, separateAudio, removeSelected, splitSelected, moveClip, trimClip, undo, canUndo: undoCount > 0, loadProject,
     handleMetadata, onVideoTime, onVideoEnded,
   }
 }

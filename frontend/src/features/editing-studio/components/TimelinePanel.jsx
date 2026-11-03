@@ -1,11 +1,11 @@
-import { Film, Music2, Pause, Play, Shrink, Maximize2, Plus, Minus, SlidersHorizontal } from 'lucide-react'
+import { Film, Music2, Pause, Play, Shrink, Maximize2, Plus, Minus, SlidersHorizontal, AudioLines } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { formatTime, formatTimecode } from '../utils/format'
 
 const MIN_PPS = 18
 const MAX_PPS = 180
 
-export default function TimelinePanel({ clips, tracks, selectedId, selectedIds = [], activeClipId, playhead, totalDuration, onSelectClip, onSelectClips, onClearSelection, onSetPlayhead, onMoveClip, onTrimClip, onAddTrack, onRemoveTrack, playing, onTogglePlayback, compactClips, onToggleCompact, zoomPercent, onZoomChange, style, frameRate = 24, onNudgePlayhead, onNudgeClip }) {
+export default function TimelinePanel({ clips, tracks, selectedId, selectedIds = [], activeClipId, playhead, totalDuration, onSelectClip, onSelectClips, onClearSelection, onSetPlayhead, onMoveClip, onTrimClip, onSeparateAudio, onAddTrack, onRemoveTrack, playing, onTogglePlayback, compactClips, onToggleCompact, zoomPercent, onZoomChange, style, frameRate = 24, onNudgePlayhead, onNudgeClip }) {
   const scrubPointerId = useRef(null)
   const trackGesture = useRef(null)
   const clipDrag = useRef(null)
@@ -194,6 +194,7 @@ export default function TimelinePanel({ clips, tracks, selectedId, selectedIds =
         <div className="timeline-actions">
           <span className="timeline-timecode" title={`播放头位置 · ${frameRate} fps`}>{formatTimecode(playhead, frameRate)}</span>
           <button className="edit-icon-button" title={playing ? '暂停时间线' : '播放时间线'} aria-label="播放或暂停时间线" onClick={onTogglePlayback}>{playing ? <Pause size={16} /> : <Play size={16} />}</button>
+          <button className="edit-icon-button" title="分离所选视频的音频" aria-label="分离所选视频的音频" disabled={!clips.some((clip) => clip.id === selectedId && clip.type === 'video' && clips.some((audio) => audio.linkedClipId === clip.id)) && !clips.some((clip) => clip.id === selectedId && clip.type === 'audio' && clip.linkedClipId)} onClick={() => onSeparateAudio?.(selectedId)}><AudioLines size={16} /></button>
           <div className="timeline-zoom-control" title="向左放大，向右缩小">
             <SlidersHorizontal size={15} />
             <input aria-label="时间线缩放" type="range" min="0" max="100" value={zoomPercent} onChange={(event) => onZoomChange(Number(event.target.value))} />

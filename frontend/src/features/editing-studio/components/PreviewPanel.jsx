@@ -1,7 +1,7 @@
 import { Clapperboard, Pause, Play, Columns } from 'lucide-react'
 import { formatTime, formatTimecode, gradeFilter } from '../utils/format'
 import { useEffect, useState } from 'react'
-import axios from 'axios'
+import { getSourceFrameRate } from '../utils/frameRateCache'
 
 export default function PreviewPanel({ activeInfo, videoRef, playhead, totalDuration, playing, onTogglePlayback, onSeek, onLoadedMetadata, onVideoTime, onVideoEnded, selectedClip, splitPreview, onToggleSplit, timelineFrameRate = 24 }) {
   const [sourceFrameRate, setSourceFrameRate] = useState(24)
@@ -14,9 +14,7 @@ export default function PreviewPanel({ activeInfo, videoRef, playhead, totalDura
     setSourceDuration(0)
     if (!selectedClip || selectedClip.type !== 'video' || !selectedClip.assetId) return undefined
     let cancelled = false
-    axios.get('/api/editing-media/frame-rate', { params: { asset_id: selectedClip.assetId } })
-      .then((response) => { if (!cancelled && Number(response.data.fps) > 0) setSourceFrameRate(Number(response.data.fps)) })
-      .catch(() => {})
+    getSourceFrameRate(selectedClip.assetId).then((fps) => { if (!cancelled && fps) setSourceFrameRate(fps) })
     return () => { cancelled = true }
   }, [selectedClip?.id, selectedClip?.type, selectedClip?.assetId])
   const renderClip = (clip, isTimeline = false) => clip ? clip.type === 'video' ? (

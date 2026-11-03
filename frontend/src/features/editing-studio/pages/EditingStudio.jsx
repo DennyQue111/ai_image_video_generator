@@ -7,6 +7,7 @@ import MediaLibraryPanel from '../components/MediaLibraryPanel'
 import PreviewPanel from '../components/PreviewPanel'
 import TimelinePanel from '../components/TimelinePanel'
 import ExportDialog from '../components/ExportDialog'
+import { getSourceFrameRate } from '../utils/frameRateCache'
 import { useEditingTimeline } from '../hooks/useEditingTimeline'
 import '../styles/EditingStudio.css'
 
@@ -40,7 +41,7 @@ export default function EditingStudio() {
     library, clips, tracks, addTrack, removeTrack, selected, selectedId, selectedIds, playhead, setPlayhead, playing, setPlaying,
     frameRate, setProjectFrameRate,
     libraryError, videoRef, activeInfo, totalDuration, loadLibrary, addAsset,
-    addLocalFiles, updateClip, selectClip, selectClips, removeSelected, splitSelected, moveClip, trimClip, undo, canUndo, loadProject,
+    addLocalFiles, updateClip, selectClip, selectClips, separateAudio, removeSelected, splitSelected, moveClip, trimClip, undo, canUndo, loadProject,
     handleMetadata, onVideoTime, onVideoEnded,
   } = timeline
 
@@ -74,8 +75,8 @@ export default function EditingStudio() {
     const savedClips = await Promise.all(clips.filter((clip) => !clip.temporary).map(async (clip) => {
       if (clip.type !== 'video' || !clip.assetId || Number(clip.sourceFrameRate) > 0) return clip
       try {
-        const result = await axios.get('/api/editing-media/frame-rate', { params: { asset_id: clip.assetId } })
-        return Number(result.data.fps) > 0 ? { ...clip, sourceFrameRate: Number(result.data.fps) } : clip
+        const fps = await getSourceFrameRate(clip.assetId)
+        return fps ? { ...clip, sourceFrameRate: fps } : clip
       } catch { return clip }
     }))
     const response = await axios.post('/api/editing-projects/save', {
@@ -150,7 +151,7 @@ export default function EditingStudio() {
           const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up) }
           window.addEventListener('pointermove', move); window.addEventListener('pointerup', up, { once: true })
         }} />
-        <ClipPropertiesPanel clip={selected} onUpdate={updateClip} onFrameRateChange={(clipId, fps) => {
+        <ClipPropertiesPanel clip={selected} onUpdate={updateClip} projectFrameRate={frameRate || 24} onFrameRateChange={(clipId, fps) => {
           const isFirstVideo = clips.filter((clip) => clip.type === 'video').sort((a, b) => a.timelineStart - b.timelineStart)[0]?.id === clipId
           if (!frameRate && isFirstVideo) setProjectFrameRate(fps)
         }} />
@@ -177,6 +178,7 @@ export default function EditingStudio() {
         onSetPlayhead={(time) => { setPlaying(false); setPlayhead(time) }}
         onMoveClip={moveClip}
         onTrimClip={trimClip}
+        onSeparateAudio={separateAudio}
         tracks={tracks}
         onAddTrack={addTrack}
         onRemoveTrack={removeTrack}
