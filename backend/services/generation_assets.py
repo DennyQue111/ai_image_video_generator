@@ -15,7 +15,9 @@ def _to_full_url(url: str) -> str:
     """将 /static/projects/... 相对路径转为后端可访问的完整 URL"""
     if url and url.startswith("/static/"):
         backend_port = os.getenv("DENNY_BACKEND_PORT", "8005")
-        full = f"http://localhost:{backend_port}{url}"
+        # The app manager binds the backend to 127.0.0.1. Using ``localhost``
+        # may resolve to ::1 on Windows, where this server is not listening.
+        full = f"http://127.0.0.1:{backend_port}{url}"
         logger.info("[API] Resolved relative URL: %s -> %s", url, full)
         return full
     return url

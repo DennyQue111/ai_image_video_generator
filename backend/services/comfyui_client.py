@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List
 
 from dependencies import style_config
+from constants import PROJECT_FILE_PATH, resolve_cache_path
 
 logger = logging.getLogger(__name__)
 
@@ -1198,14 +1199,27 @@ class ComfyUIClient:
             包含上传后文件信息的字典
         """
         logger.info("[ComfyUI] Uploading image from %s", image_url)
+        image_data = None
+        if "/static/projects/" in image_url:
+            relative_path = image_url.split("/static/projects/", 1)[1].split("?", 1)[0]
+            local_path = resolve_cache_path(relative_path)
+            try:
+                local_path.relative_to(Path(PROJECT_FILE_PATH).resolve())
+            except ValueError as exc:
+                raise ValueError(f"Reference image path is outside the cache: {relative_path}") from exc
+            if not local_path.is_file():
+                raise FileNotFoundError(f"Reference image not found in cache: {local_path}")
+            image_data = local_path.read_bytes()
+            logger.info("[ComfyUI] Read cached reference image directly, size=%d bytes", len(image_data))
         async with aiohttp.ClientSession() as session:
             # 下载图片
-            async with session.get(image_url) as resp:
-                if resp.status != 200:
-                    logger.error("[ComfyUI] Failed to download image from %s, status=%s", image_url, resp.status)
-                    raise Exception(f"Failed to download image: {image_url}")
-                image_data = await resp.read()
-                logger.info("[ComfyUI] Image downloaded, size=%d bytes", len(image_data))
+            if image_data is None:
+                async with session.get(image_url) as resp:
+                    if resp.status != 200:
+                        logger.error("[ComfyUI] Failed to download image from %s, status=%s", image_url, resp.status)
+                        raise Exception(f"Failed to download image: {image_url}")
+                    image_data = await resp.read()
+                    logger.info("[ComfyUI] Image downloaded, size=%d bytes", len(image_data))
 
             # 上传到ComfyUI
             form_data = aiohttp.FormData()
