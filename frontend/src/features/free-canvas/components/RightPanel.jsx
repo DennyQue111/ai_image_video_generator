@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Sparkles, Video, Scissors, Trash2, ArrowUp, FolderOpen, Camera, Brush } from 'lucide-react'
+import { Sparkles, Video, Scissors, Trash2, ArrowUp, FolderOpen, Camera, Brush, Save, Eye, Download } from 'lucide-react'
 import axios from 'axios'
 import InpaintMaskModal from './InpaintMaskModal'
 
@@ -11,6 +11,7 @@ const cloneStage = (stage) => JSON.parse(JSON.stringify(stage))
 function DirectorStagePanel({ stage, nodeId, onUpdate, onBringToFront, onRemove }) {
   const [addKind, setAddKind] = useState('wall')
   const [viewName, setViewName] = useState('')
+  const [activeTab, setActiveTab] = useState('properties')
   const selected = stage?.objects?.find((item) => item.id === stage.selectedObjectId) || stage?.objects?.[0]
   const updateStage = (next) => onUpdate(next)
   const updateSelected = (changes) => {
@@ -43,11 +44,11 @@ function DirectorStagePanel({ stage, nodeId, onUpdate, onBringToFront, onRemove 
     if (field === 'scale' && selected.lockAspect) values.fill(Math.max(0.1, value))
     updateSelected({ [field]: values })
   }
-  const updateHeading = (rawValue) => {
+  const updateRotation = (index, rawValue) => {
     const value = Number(rawValue)
     if (!Number.isFinite(value)) return
     const rotation = [...(selected.rotation || [0, 0, 0])]
-    rotation[2] = (value * Math.PI) / 180
+    rotation[index] = (value * Math.PI) / 180
     updateSelected({ rotation })
   }
   const updateDepth = (rawValue) => {
@@ -60,37 +61,40 @@ function DirectorStagePanel({ stage, nodeId, onUpdate, onBringToFront, onRemove 
   return (
     <div className="right-panel director-side-panel">
       <div className="director-side-title">🎬 导演台控制</div>
-      <div className="director-stage-label">添加占位物</div>
-      <div className="director-stage-add-row">
-        <select value={addKind} onChange={(event) => setAddKind(event.target.value)}>{Object.entries(DIRECTOR_KINDS).map(([kind, label]) => <option key={kind} value={kind}>{label}</option>)}</select>
-        <button onClick={addObject}>添加</button>
+      <div className="director-tabs" role="tablist" aria-label="导演台设置">
+        <button role="tab" aria-selected={activeTab === 'properties'} className={activeTab === 'properties' ? 'active' : ''} onClick={() => setActiveTab('properties')}>基础属性</button>
+        <button role="tab" aria-selected={activeTab === 'camera'} className={activeTab === 'camera' ? 'active' : ''} onClick={() => setActiveTab('camera')}>相机</button>
       </div>
-      <div className="director-stage-label">场景物体</div>
-      <select value={selected?.id || ''} onChange={(event) => updateStage({ ...cloneStage(stage), selectedObjectId: event.target.value })}>
-        {(stage.objects || []).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-      </select>
-      {selected && selected.kind !== 'ground' && <>
-        <button className="director-stage-remove" onClick={removeSelected}>删除当前物体</button>
-        <div className="director-stage-label">位置（DCC 米）</div>
-        <div className="director-stage-number-row">
-          {['X 横向', 'Y 纵深', 'Z 高低'].map((label, index) => <label key={label}>{label}<input type="number" step="0.1" value={selected.position?.[index] ?? 0} onChange={(event) => updateVector('position', index, event.target.value)} /></label>)}
+      {activeTab === 'properties' ? <>
+        <div className="director-stage-label">添加占位物</div>
+        <div className="director-stage-add-row">
+          <select value={addKind} onChange={(event) => setAddKind(event.target.value)}>{Object.entries(DIRECTOR_KINDS).map(([kind, label]) => <option key={kind} value={kind}>{label}</option>)}</select>
+          <button onClick={addObject}>添加</button>
         </div>
-        <div className="director-stage-number-row"><label>旋转 Z 轴 °<input type="number" step="1" value={Math.round(((selected.rotation?.[2] || 0) * 180) / Math.PI)} onChange={(event) => updateHeading(event.target.value)} /></label></div>
-        <div className="director-stage-label">缩放</div>
-        <label className="director-stage-checkbox"><input type="checkbox" checked={Boolean(selected.lockAspect)} onChange={(event) => updateSelected({ lockAspect: event.target.checked })} /> 固定比例</label>
-        <div className="director-stage-number-row">
-          {['X', 'Y', 'Z'].map((label, index) => <label key={label}>{label}<input type="number" min="0.1" step="0.1" value={scaleValues(selected.scale)[index]} onChange={(event) => updateVector('scale', index, event.target.value)} /></label>)}
+        <div className="director-stage-label">场景物体</div>
+        <div className="director-stage-object-row">
+          <select value={selected?.id || ''} onChange={(event) => updateStage({ ...cloneStage(stage), selectedObjectId: event.target.value })}>
+            {(stage.objects || []).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+          </select>
+          <button className="director-stage-remove-icon" title="删除当前物体" aria-label="删除当前物体" disabled={!selected || selected.kind === 'ground'} onClick={removeSelected}><Trash2 size={15} /></button>
         </div>
+        {selected && selected.kind !== 'ground' && <>
+          <div className="director-stage-vector"><span>位置（米）</span>{['X', 'Y', 'Z'].map((axis, index) => <label key={axis}>{axis}<input type="number" step="0.1" value={selected.position?.[index] ?? 0} onChange={(event) => updateVector('position', index, event.target.value)} /></label>)}</div>
+          <div className="director-stage-vector"><span>旋转（°）</span>{['X', 'Y', 'Z'].map((axis, index) => <label key={axis}>{axis}<input type="number" step="1" value={Number((((selected.rotation?.[index] || 0) * 180) / Math.PI).toFixed(1))} onChange={(event) => updateRotation(index, event.target.value)} /></label>)}</div>
+          <div className="director-stage-vector-group">
+            <div className="director-stage-vector"><span>缩放</span>{['X', 'Y', 'Z'].map((axis, index) => <label key={axis}>{axis}<input type="number" min="0.1" step="0.1" value={scaleValues(selected.scale)[index]} onChange={(event) => updateVector('scale', index, event.target.value)} /></label>)}</div>
+            <label className="director-stage-checkbox"><input type="checkbox" checked={Boolean(selected.lockAspect)} onChange={(event) => updateSelected({ lockAspect: event.target.checked })} /> 固定比例</label>
+          </div>
+        </>}
+      </> : <>
+        <div className="director-stage-label">命名视角</div>
+        <div className="director-stage-camera-row director-stage-view-row"><input list={`director-view-options-${nodeId}`} value={viewName} placeholder="输入或选择视角名称" onChange={(event) => setViewName(event.target.value)} /><datalist id={`director-view-options-${nodeId}`}>{(stage.views || []).map((view) => <option key={view.id || view.name} value={view.name} />)}</datalist>
+          <button title="保存视角" aria-label="保存视角" disabled={!viewName.trim()} onClick={() => command('saveView')}><Save size={15} /></button>
+          <button title="切换视角" aria-label="切换视角" disabled={!(stage.views || []).some((view) => view.name === viewName)} onClick={() => command('switchView')}><Eye size={15} /></button>
+          <button title="导出 PNG" aria-label="导出 PNG" onClick={() => command('exportFrame')}><Download size={15} /></button>
+        </div>
+        <div className="director-stage-depth-row"><label className="director-stage-label" htmlFor={`director-depth-${nodeId}`}>相机视线深度（米）</label><input id={`director-depth-${nodeId}`} type="number" min="100" max="100000" step="100" value={stage.depth || 1000} onChange={(event) => updateDepth(event.target.value)} /></div>
       </>}
-      <div className="director-stage-label">命名视角</div>
-      <div className="director-stage-camera-row"><input list={`director-view-options-${nodeId}`} value={viewName} placeholder="输入或选择视角名称" onChange={(event) => setViewName(event.target.value)} /><datalist id={`director-view-options-${nodeId}`}>{(stage.views || []).map((view) => <option key={view.id || view.name} value={view.name} />)}</datalist></div>
-      <div className="director-stage-camera-row director-stage-camera-actions">
-        <button disabled={!viewName.trim()} onClick={() => command('saveView')}>保存</button>
-        <button disabled={!(stage.views || []).some((view) => view.name === viewName)} onClick={() => command('switchView')}>切换</button>
-        <button onClick={() => command('exportFrame')}>导出 PNG</button>
-      </div>
-      <div className="director-stage-label">相机视线深度（米）</div>
-      <div className="director-stage-camera-row"><input type="number" min="100" max="100000" step="100" value={stage.depth || 1000} onChange={(event) => updateDepth(event.target.value)} /></div>
       <div className="director-side-note">DCC 轴：X 红＝横向，Y 绿＝纵深，Z 蓝＝向上。右键旋转、滚轮缩放视图。</div>
       <button className="canvas-btn canvas-btn-primary" style={{ justifyContent: 'center', marginTop: 12 }} onClick={onBringToFront}><ArrowUp size={16} /> 置顶</button>
       <button className="canvas-btn canvas-btn-danger" style={{ justifyContent: 'center' }} onClick={onRemove}><Trash2 size={16} /> 删除导演台</button>
